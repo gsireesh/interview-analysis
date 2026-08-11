@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# macOS
+.DS_Store
+
+# Recordings and their transcripts must never be committed. This repo is for the
+# tools; the interviews they read are participant data and live outside it. Test
+# fixtures are Python strings in tests/, not files, so nothing here is needed.
+*.vtt
+*.mp4
+*.m4a
+*.m4v
+*.mov
+*.webm
+*.mkv
+*.mp3
+*.wav
+*.aac
+*.flac
+*.ogg
+*.highlights.json

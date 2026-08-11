@@ -1,0 +1,360 @@
+/* Wiring, shared state, and the reading/following cursor state machine.
+ *
+ * Reading is the default and the point of the tool. The transcript starts in
+ * READING mode with the dock minimized: the cursor follows where you are in the
+ * text and quietly cues the player to match, so playback always starts where you
+ * are looking. Pressing play switches to FOLLOWING, where the transcript keeps up
+ * with the audio instead. Scrolling or moving the cursor by hand drops back to
+ * READING without stopping playback, and a "Follow along" button re-attaches.
+ */
+
+import { $, api, formatTime } from "./util.js";
+import {
+  applyHighlights,
+  cacheGeometry,
+  chunkIndexAtScroll,
+  chunkIndexAtTime,
+  renderTranscript,
+  setCursor,
+  updateSpine,
+} from "./transcript.js";
+import { cue, initPlayer, nudge, seekAndPlay, togglePlay } from "./player.js";
+import { initSearch } from "./search.js";
+import { copySelection, hideQuoteBar, initHighlights, renderList, save } from "./highlights.js";
+import { enterEdit, exitEdit, isEditing } from "./editing.js";
+
+const ctx = {
+  el: {
+    reader: $("reader"),
+    transcript: $("transcript"),
+    chunks: $("chunks"),
+    spineMarker: $("spine-marker"),
+    spineDot: $("spine-dot"),
+    title: $("title"),
+    meta: $("meta"),
+    notices: $("notices"),
+    sidebar: $("sidebar"),
+    panelSearch: $("panel-search"),
+    panelHighlights: $("panel-highlights"),
+    tabSearch: $("tab-search"),
+    tabHighlights: $("tab-highlights"),
+    themeToggle: $("theme-toggle"),
+    searchInput: $("search-input"),
+    regexToggle: $("regex-toggle"),
+    searchResults: $("search-results"),
+    searchCount: $("search-count"),
+    highlightList: $("highlight-list"),
+    highlightCount: $("highlight-count"),
+    highlightsPath: $("highlights-path"),
+    tagFilters: $("tag-filters"),
+    dock: $("dock"),
+    dockToggle: $("dock-toggle"),
+    dockGrip: $("dock-grip"),
+    dockStage: $("dock-stage"),
+    media: $("media"),
+    play: $("play"),
+    scrub: $("scrub"),
+    clock: $("clock"),
+    duration: $("duration"),
+    follow: $("follow"),
+    quotebar: $("quotebar"),
+    quotebarTime: $("quotebar-time"),
+    quotebarColors: $("quotebar-colors"),
+    quotebarNote: $("quotebar-note"),
+    quotebarCopy: $("quotebar-copy"),
+  },
+  mode: "reading",
+  cursorIndex: 0,
+  currentTime: 0,
+  chunks: [],
+  cueById: new Map(),
+  cueByIndex: new Map(),
+  highlights: [],
+  knownTags: [],
+  colors: ["amber"],
+  paintedCues: new Set(),
+  activeHighlightId: null,
+  tagFilter: null,
+  pendingSelection: null,
+  scrubbing: false,
+};
+
+/* ---------------------------------------------------------------- notices -- */
+
+ctx.notify = (message, { kind = "info", key = null } = {}) => {
+  const notice = document.createElement("div");
+  notice.className = `notice${kind === "warn" ? " notice--warn" : ""}`;
+  notice.innerHTML = `<span class="notice__label">${kind === "warn" ? "Check" : "Note"}</span><span></span><button type="button" aria-label="Dismiss">✕</button>`;
+  notice.querySelector("span:nth-child(2)").textContent = message;
+  notice.querySelector("button").addEventListener("click", () => {
+    notice.remove();
+    if (key) localStorage.setItem(key, "dismissed");
+  });
+  ctx.el.notices.appendChild(notice);
+  if (!key) setTimeout(() => notice.remove(), 4000);
+};
+
+/* ------------------------------------------------------------------ tabs -- */
+
+ctx.showTab = (which) => {
+  const showSearch = which === "search";
+  ctx.el.panelSearch.hidden = !showSearch;
+  ctx.el.panelHighlights.hidden = showSearch;
+  ctx.el.tabSearch.setAttribute("aria-pressed", String(showSearch));
+  ctx.el.tabHighlights.setAttribute("aria-pressed", String(!showSearch));
+};
+
+/* ------------------------------------------------------------ mode logic -- */
+
+ctx.setMode = (mode) => {
+  if (ctx.mode === mode) return;
+  ctx.mode = mode;
+  syncFollowButton();
+  updateSpine(ctx);
+};
+
+function syncFollowButton() {
+  const playing = !ctx.el.media.paused && Boolean(ctx.el.media.src);
+  ctx.el.follow.hidden = !(playing && ctx.mode === "reading");
+}
+
+/* ------------------------------------------------------------------ load -- */
+
+async function load() {
+  const config = await api("/api/config");
+  ctx.colors = config.colors;
+  ctx.recordingId = config.default_recording_id;
+  if (!ctx.recordingId) {
+    ctx.el.chunks.innerHTML = '<p class="empty">No recording loaded.</p>';
+    return;
+  }
+
+  const data = await api(`/api/recordings/${ctx.recordingId}`);
+  ctx.data = data;
+  ctx.chunks = data.transcript.chunks;
+  ctx.parts = data.transcript.parts || [];
+  ctx.highlights = data.highlights;
+  ctx.knownTags = data.known_tags;
+
+  for (const cueItem of data.transcript.cues) {
+    ctx.cueById.set(cueItem.id, cueItem);
+    ctx.cueByIndex.set(cueItem.index, cueItem);
+  }
+
+  document.title = data.title;
+  ctx.el.title.textContent = data.title;
+  ctx.el.highlightsPath.textContent = data.highlights_file;
+
+  const diagnostics = data.transcript.diagnostics;
+  ctx.el.meta.textContent = [
+    formatTime(data.duration),
+    `${diagnostics.chunk_count} blocks`,
+    `${diagnostics.speakers.length} speakers`,
+    data.media_file || "no media",
+  ].join("  ·  ");
+
+  ctx.onHighlightsChanged = () => {
+    applyHighlights(ctx);
+    renderList(ctx);
+  };
+
+  renderTranscript(ctx);
+  applyHighlights(ctx);
+  initPlayer(ctx);
+  initSearch(ctx);
+  initHighlights(ctx);
+  renderList(ctx);
+  // Quotes are the output of a reading session, so that is what the sidebar
+  // opens on. Search is a keystroke away with `/`.
+  ctx.showTab("highlights");
+  setCursor(ctx, 0);
+  showDiagnostics(data, diagnostics);
+}
+
+function showDiagnostics(data, diagnostics) {
+  if (data.migrated_from) {
+    ctx.notify(
+      `Quotes from ${data.migrated_from} were moved into ${data.highlights_file}. The original file was left in place as a backup.`,
+      { kind: "info", key: null }
+    );
+  }
+
+  if (data.highlights_stale) {
+    ctx.notify(
+      `The transcript changed since these quotes were saved. Their timestamps may no longer line up.`,
+      { kind: "warn", key: null }
+    );
+  }
+
+  // Speaker detection is a heuristic, so say what it decided rather than letting
+  // a misparse be discovered an hour into a reading session.
+  const key = `subtitle-search:parsed:${data.transcript.sha256}`;
+  if (localStorage.getItem(key) === "dismissed") return;
+
+  const speakers = diagnostics.speakers;
+  const parts = diagnostics.part_count > 1
+    ? `${diagnostics.part_count} recordings joined into one timeline. `
+    : "";
+  const summary = speakers.length
+    ? `${parts}${diagnostics.cue_count} cues grouped into ${diagnostics.chunk_count} blocks. Speakers: ${speakers.join(", ")}.`
+    : `${parts}${diagnostics.cue_count} cues, no speakers detected — blocks were split on pauses instead.`;
+  ctx.notify(summary, { kind: speakers.length ? "info" : "warn", key });
+}
+
+/* ------------------------------------------------- reading cursor driver -- */
+
+let scrollQueued = false;
+
+ctx.el.reader.addEventListener("scroll", () => {
+  if (ctx.mode !== "reading" || scrollQueued) return;
+  scrollQueued = true;
+  requestAnimationFrame(() => {
+    scrollQueued = false;
+    setCursor(ctx, chunkIndexAtScroll(ctx));
+  });
+});
+
+// Detaching on real input intent is more reliable than trying to tell a
+// programmatic scroll from a human one after the fact.
+for (const event of ["wheel", "touchmove"]) {
+  ctx.el.reader.addEventListener(event, () => ctx.setMode("reading"), { passive: true });
+}
+
+let cueTimer;
+ctx.onCursorMoved = (chunk) => {
+  if (!chunk || ctx.mode !== "reading") return;
+  clearTimeout(cueTimer);
+  cueTimer = setTimeout(() => cue(ctx, chunk.start), 200);
+};
+
+ctx.onTimeUpdate = (seconds) => {
+  syncFollowButton();
+  if (ctx.mode !== "following") return;
+  const index = chunkIndexAtTime(ctx, seconds);
+  if (index !== ctx.cursorIndex) setCursor(ctx, index, { scroll: true });
+  else updateSpine(ctx);
+};
+
+ctx.el.chunks.addEventListener("click", (event) => {
+  const chunkEl = event.target.closest(".chunk");
+  if (!chunkEl) return;
+  const index = ctx.chunks.findIndex((chunk) => chunk.id === chunkEl.dataset.chunkId);
+  if (index < 0) return;
+
+  // Clicking outside the block being corrected finishes editing it.
+  if (isEditing(ctx) && ctx.editingChunk !== index) exitEdit(ctx);
+  if (event.target.closest(".cue-lines, .edit-bar")) return;
+
+  const mark = event.target.closest("mark.hl");
+  if (mark) {
+    ctx.activeHighlightId = mark.dataset.highlightId;
+    ctx.showTab("highlights");
+    applyHighlights(ctx);
+  }
+
+  // Clicking the timestamp means "play from here"; clicking the text just moves
+  // the reading cursor and cues the player without starting it.
+  const fromTimestamp = Boolean(event.target.closest(".chunk__time"));
+  ctx.setMode("reading");
+  setCursor(ctx, index);
+  if (fromTimestamp) seekAndPlay(ctx, ctx.chunks[index].start, { play: true });
+});
+
+ctx.el.follow.addEventListener("click", () => {
+  ctx.setMode("following");
+  setCursor(ctx, chunkIndexAtTime(ctx, ctx.currentTime), { scroll: true });
+});
+
+window.addEventListener("resize", () => {
+  cacheGeometry(ctx);
+  updateSpine(ctx);
+});
+
+/* -------------------------------------------------------------- keyboard -- */
+
+const TYPING = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+
+document.addEventListener("keydown", (event) => {
+  if (TYPING.has(event.target.tagName) || event.target.isContentEditable) return;
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+  switch (event.key) {
+    case "j":
+      event.preventDefault();
+      ctx.setMode("reading");
+      setCursor(ctx, ctx.cursorIndex + 1, { scroll: true });
+      break;
+    case "k":
+      event.preventDefault();
+      ctx.setMode("reading");
+      setCursor(ctx, ctx.cursorIndex - 1, { scroll: true });
+      break;
+    case " ":
+      event.preventDefault();
+      togglePlay(ctx);
+      break;
+    case "ArrowLeft":
+      event.preventDefault();
+      nudge(ctx, -5);
+      break;
+    case "ArrowRight":
+      event.preventDefault();
+      nudge(ctx, 5);
+      break;
+    case "/":
+      event.preventDefault();
+      ctx.showTab("search");
+      ctx.el.searchInput.focus();
+      ctx.el.searchInput.select();
+      break;
+    case "e":
+      event.preventDefault();
+      enterEdit(ctx, ctx.cursorIndex);
+      break;
+    case "h":
+      event.preventDefault();
+      save(ctx, {});
+      break;
+    case "c":
+      event.preventDefault();
+      copySelection(ctx);
+      break;
+    case "f":
+      event.preventDefault();
+      ctx.setMode(ctx.mode === "following" ? "reading" : "following");
+      if (ctx.mode === "following") setCursor(ctx, chunkIndexAtTime(ctx, ctx.currentTime), { scroll: true });
+      break;
+    case "Escape":
+      hideQuoteBar(ctx);
+      window.getSelection()?.removeAllRanges();
+      if (ctx.activeHighlightId) {
+        ctx.activeHighlightId = null;
+        applyHighlights(ctx);
+      }
+      break;
+    default:
+      break;
+  }
+});
+
+/* ----------------------------------------------------------------- chrome -- */
+
+ctx.el.tabSearch.addEventListener("click", () => ctx.showTab("search"));
+ctx.el.tabHighlights.addEventListener("click", () => ctx.showTab("highlights"));
+
+const THEME_KEY = "subtitle-search:theme";
+const applyTheme = (theme) => {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem(THEME_KEY, theme);
+};
+applyTheme(localStorage.getItem(THEME_KEY) || "auto");
+
+ctx.el.themeToggle.addEventListener("click", () => {
+  const order = ["auto", "light", "dark"];
+  const current = document.documentElement.dataset.theme || "auto";
+  applyTheme(order[(order.indexOf(current) + 1) % order.length]);
+});
+
+load().catch((error) => {
+  ctx.notify(`Could not load the recording: ${error.message}`, { kind: "warn", key: null });
+});

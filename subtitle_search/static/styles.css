@@ -1,0 +1,1062 @@
+/* Transcript reader.
+ *
+ * The organizing idea: a transcript is a document ruled by time. So the page is
+ * built around a "time spine" -- a hairline rule down the gutter with timestamps
+ * hanging off it as ticks, and a marker that lights up the block you are reading.
+ * That is the one loud element. Everything else stays quiet so hours of reading
+ * do not wear you down.
+ *
+ * No web fonts: the server makes no outbound requests, so type is drawn entirely
+ * from system faces. Iowan Old Style / Charter are the reading serifs on macOS.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --paper: #f0f1ec;
+  --paper-raised: #f8f9f5;
+  --paper-sunk: #e7e9e2;
+  --ink: #1c1f1b;
+  --ink-soft: #545849;
+  --ink-faint: #8a8e80;
+  --rule: #d3d7c9;
+  --rule-soft: #e1e4d9;
+  --marker: #3d3bd4;
+  --marker-wash: rgba(61, 59, 212, 0.09);
+  --focus: #3d3bd4;
+
+  --hl-amber: rgba(233, 172, 20, 0.34);
+  --hl-teal: rgba(17, 160, 152, 0.26);
+  --hl-rose: rgba(226, 84, 116, 0.24);
+  --hl-violet: rgba(134, 104, 232, 0.24);
+  --hl-sage: rgba(116, 170, 92, 0.28);
+
+  --dot-amber: #d99a12;
+  --dot-teal: #10a098;
+  --dot-rose: #e25474;
+  --dot-violet: #8668e8;
+  --dot-sage: #74aa5c;
+
+  --serif: "Iowan Old Style", "Charter", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace;
+
+  --gutter: 4.25rem;
+  --spine-gap: 1.75rem;
+  --pad-x: 2rem;
+  --spine-x: calc(var(--pad-x) + var(--gutter) + var(--spine-gap) / 2);
+  --measure: 40rem;
+  --topbar-h: 3.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #15171a;
+    --paper-raised: #1d2024;
+    --paper-sunk: #101215;
+    --ink: #e3e6e0;
+    --ink-soft: #9ea299;
+    --ink-faint: #6a6e66;
+    --rule: #2c3034;
+    --rule-soft: #24282c;
+    --marker: #8280ff;
+    --marker-wash: rgba(130, 128, 255, 0.13);
+    --focus: #8280ff;
+
+    --hl-amber: rgba(233, 172, 20, 0.30);
+    --hl-teal: rgba(35, 195, 185, 0.24);
+    --hl-rose: rgba(240, 110, 140, 0.22);
+    --hl-violet: rgba(158, 132, 255, 0.26);
+    --hl-sage: rgba(139, 196, 113, 0.24);
+
+    --dot-amber: #e9ac14;
+    --dot-teal: #23c3b9;
+    --dot-rose: #f06e8c;
+    --dot-violet: #9e84ff;
+    --dot-sage: #8bc471;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #15171a;
+  --paper-raised: #1d2024;
+  --paper-sunk: #101215;
+  --ink: #e3e6e0;
+  --ink-soft: #9ea299;
+  --ink-faint: #6a6e66;
+  --rule: #2c3034;
+  --rule-soft: #24282c;
+  --marker: #8280ff;
+  --marker-wash: rgba(130, 128, 255, 0.13);
+  --focus: #8280ff;
+
+  --hl-amber: rgba(233, 172, 20, 0.30);
+  --hl-teal: rgba(35, 195, 185, 0.24);
+  --hl-rose: rgba(240, 110, 140, 0.22);
+  --hl-violet: rgba(158, 132, 255, 0.26);
+  --hl-sage: rgba(139, 196, 113, 0.24);
+
+  --dot-amber: #e9ac14;
+  --dot-teal: #23c3b9;
+  --dot-rose: #f06e8c;
+  --dot-violet: #9e84ff;
+  --dot-sage: #8bc471;
+}
+
+* { box-sizing: border-box; }
+
+/* Class selectors that set `display` would otherwise beat the user-agent
+ * `[hidden] { display: none }` rule, leaving hidden panels on screen. */
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ---------------------------------------------------------------- topbar -- */
+
+.topbar {
+  flex: 0 0 auto;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.topbar__identity { min-width: 0; flex: 0 1 auto; }
+
+.topbar__title {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar__meta {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.topbar__search {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: min(28rem, 100%);
+  padding: 0 0.625rem;
+  height: 2rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+}
+
+.field:focus-within { border-color: var(--marker); }
+
+.field__key {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0 0.3rem;
+  line-height: 1.3;
+}
+
+.field input {
+  flex: 1;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  outline: none;
+  min-width: 0;
+}
+
+.topbar__actions { display: flex; gap: 0.375rem; flex: 0 0 auto; }
+
+.btn, .toggle {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0 0.625rem;
+  height: 2rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.btn:hover, .toggle:hover { border-color: var(--ink-faint); color: var(--ink); }
+
+.btn[aria-pressed="true"], .toggle[aria-pressed="true"] {
+  background: var(--marker-wash);
+  border-color: var(--marker);
+  color: var(--marker);
+}
+
+.btn--icon { padding: 0; width: 2rem; justify-content: center; }
+
+.toggle { font-family: var(--mono); }
+
+.count {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+}
+
+.btn[aria-pressed="true"] .count { color: inherit; }
+
+/* --------------------------------------------------------------- notices -- */
+
+.notices { flex: 0 0 auto; }
+
+.notice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-sunk);
+  color: var(--ink-soft);
+}
+
+.notice--warn { background: var(--hl-amber); color: var(--ink); }
+
+.notice__label {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.notice button {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  opacity: 0.6;
+}
+
+.notice button:hover { opacity: 1; }
+
+/* ------------------------------------------------------------- workspace -- */
+
+.workspace {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.reader {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader { scroll-behavior: auto; }
+}
+
+.transcript {
+  position: relative;
+  max-width: calc(var(--pad-x) * 2 + var(--gutter) + var(--spine-gap) + var(--measure));
+  margin: 0 auto;
+  padding: 3.5rem var(--pad-x) 60vh;
+}
+
+/* The spine itself: one continuous hairline the whole transcript hangs from. */
+.transcript::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--spine-x);
+  width: 1px;
+  background: var(--rule-soft);
+}
+
+/* -------------------------------------------------------- the spine mark -- */
+
+.spine-marker {
+  position: absolute;
+  left: calc(var(--spine-x) - 1px);
+  width: 3px;
+  background: var(--marker);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .spine-marker {
+    transition: top 260ms cubic-bezier(0.22, 1, 0.36, 1),
+                height 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+/* The exact playback position inside the current block, shown only while the
+ * transcript is following the audio -- otherwise it would imply a precision the
+ * reading cursor does not have. */
+.spine-marker__dot {
+  position: absolute;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  margin-left: -4.5px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--marker);
+  box-shadow: 0 0 0 3px var(--paper);
+}
+
+/* ---------------------------------------------------------------- chunks -- */
+
+.chunk {
+  display: grid;
+  grid-template-columns: var(--gutter) minmax(0, 1fr);
+  column-gap: var(--spine-gap);
+  padding: 0.75rem 0;
+  scroll-margin-top: 4rem;
+  scroll-margin-bottom: 40vh;
+}
+
+.chunk__time {
+  grid-column: 1;
+  justify-self: end;
+  /* The tick marks where the block begins, so it aligns with the first line
+     rather than drifting to the middle of a long turn. */
+  align-self: start;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  padding-top: 0.5rem;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  line-height: 1.4;
+}
+
+.chunk__body { grid-column: 2; min-width: 0; }
+
+.chunk__speaker {
+  font-family: var(--sans);
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--ink-faint);
+  margin: 0.5rem 0 0.375rem;
+}
+
+.chunk__text {
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  line-height: 1.72;
+  color: var(--ink);
+  margin: 0 0 0.75em;
+  hyphens: auto;
+}
+
+.chunk__text:last-child { margin-bottom: 0; }
+
+.chunk--cursor .chunk__time { color: var(--marker); }
+.chunk--cursor .chunk__speaker { color: var(--ink-soft); }
+
+/* Reading is the default mode, so the cursor is a quiet ambient wash rather
+ * than a selection box -- it tells you where you are without shouting. */
+.chunk--cursor .chunk__body {
+  background: var(--marker-wash);
+  box-shadow: -0.75rem 0 0 var(--marker-wash), 0.75rem 0 0 var(--marker-wash);
+  border-radius: 1px;
+}
+
+.chunk--dim .chunk__text { color: var(--ink-soft); }
+
+.cue { border-radius: 2px; }
+
+.cue--flash {
+  animation: flash 1.4s ease-out;
+}
+
+@keyframes flash {
+  0%, 30% { background: var(--marker-wash); box-shadow: 0 0 0 3px var(--marker-wash); }
+  100% { background: transparent; box-shadow: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cue--flash { animation: none; background: var(--marker-wash); }
+}
+
+/* ---------------------------------------------------------- editing mode -- */
+
+/* Reading shows merged prose; correcting shows the captions underneath, because
+ * that is the unit that gets written back to the file. */
+.edit-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.edit-bar__hint {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.03em;
+}
+
+.edit-bar__done {
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--marker);
+  background: var(--marker-wash);
+  border: 1px solid var(--marker);
+  border-radius: 2px;
+  padding: 0.15rem 0.6rem;
+  cursor: pointer;
+}
+
+.chunk--editing .chunk__body {
+  background: var(--paper-raised);
+  box-shadow: -0.75rem 0 0 var(--paper-raised), 0.75rem 0 0 var(--paper-raised);
+  outline: 1px solid var(--rule);
+}
+
+.cue-lines { display: flex; flex-direction: column; gap: 0.25rem; }
+
+.cue-line {
+  display: grid;
+  grid-template-columns: 1.25rem 3rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.5rem;
+  border-radius: 2px;
+  padding: 0.125rem 0.25rem;
+}
+
+.cue-line:focus-within { background: var(--marker-wash); }
+
+.cue-line__play {
+  font-size: 0.5625rem;
+  line-height: 1;
+  color: var(--ink-faint);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: 2px;
+}
+
+.cue-line__play:hover { color: var(--marker); }
+
+.cue-line__time {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+.cue-line__text {
+  font-family: var(--serif);
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--ink);
+  padding: 0.125rem 0.375rem;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cue-line__text:focus { border-color: var(--marker); background: var(--paper); }
+
+.cue-line--saving .cue-line__text { opacity: 0.55; }
+.cue-line--saved .cue-line__text { border-color: var(--dot-sage); }
+.cue-line--failed .cue-line__text { border-color: var(--dot-rose); }
+
+/* ----------------------------------------------------------- part breaks -- */
+
+/* An interrupted session runs on one continuous timeline, so this marker is the
+ * only place the real interruption shows. It cuts across the spine, because
+ * that is exactly what happened: the recording stopped. */
+.part-break {
+  display: flex;
+  align-items: center;
+  margin: 2.5rem 0 2rem;
+  position: relative;
+  z-index: 3;
+}
+
+.part-break::before,
+.part-break::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.part-break__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  background: var(--paper);
+  padding: 0 0.75rem;
+}
+
+.part-break__clock { color: var(--marker); }
+
+/* ------------------------------------------------------------ highlights -- */
+
+mark.hl {
+  background: var(--hl-amber);
+  color: inherit;
+  padding: 0.1em 0;
+  border-radius: 2px;
+  cursor: pointer;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+mark.hl--amber { background: var(--hl-amber); }
+mark.hl--teal { background: var(--hl-teal); }
+mark.hl--rose { background: var(--hl-rose); }
+mark.hl--violet { background: var(--hl-violet); }
+mark.hl--sage { background: var(--hl-sage); }
+
+mark.hl--active { box-shadow: 0 0 0 2px var(--marker); }
+
+mark.hl--noted::after {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  vertical-align: super;
+  margin-left: 2px;
+}
+
+/* --------------------------------------------------------------- sidebar -- */
+
+.sidebar {
+  flex: 0 0 22rem;
+  border-left: 1px solid var(--rule);
+  background: var(--paper-sunk);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+
+.panel__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.875rem 1rem 0.625rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.panel__title {
+  margin: 0;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--ink-faint);
+}
+
+.panel__count {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12rem;
+}
+
+.panel__body { flex: 1 1 auto; overflow-y: auto; padding: 0.5rem; }
+
+.panel__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+}
+
+.panel__filters:not(:empty) { padding: 0.5rem; border-bottom: 1px solid var(--rule); }
+
+.empty {
+  margin: 0;
+  padding: 1.5rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+/* ---------------------------------------------------------- result cards -- */
+
+.result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  padding: 0.625rem 0.75rem;
+  cursor: pointer;
+  font: inherit;
+  border-radius: 2px;
+}
+
+.result:hover { background: var(--paper-raised); border-left-color: var(--rule); }
+.result--active { border-left-color: var(--marker); background: var(--paper-raised); }
+
+.result__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.result__speaker {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result__time {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  flex: 0 0 auto;
+}
+
+.result__kind {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0 0.2rem;
+}
+
+.result__text {
+  font-family: var(--serif);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.result__text mark {
+  background: var(--marker-wash);
+  color: var(--ink);
+  font-weight: 600;
+  border-radius: 1px;
+}
+
+/* ------------------------------------------------------- highlight cards -- */
+
+.quote {
+  border-left: 2px solid var(--rule);
+  padding: 0.625rem 0.75rem;
+  margin-bottom: 0.25rem;
+  border-radius: 2px;
+}
+
+.quote:hover { background: var(--paper-raised); }
+.quote--amber { border-left-color: var(--dot-amber); }
+.quote--teal { border-left-color: var(--dot-teal); }
+.quote--rose { border-left-color: var(--dot-rose); }
+.quote--violet { border-left-color: var(--dot-violet); }
+.quote--sage { border-left-color: var(--dot-sage); }
+
+.quote__text {
+  font-family: var(--serif);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  margin: 0 0 0.375rem;
+  cursor: pointer;
+}
+
+.quote__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  margin-bottom: 0.375rem;
+}
+
+.quote__meta time { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.quote__speaker {
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote__tools { margin-left: auto; display: flex; gap: 0.25rem; flex: 0 0 auto; }
+
+.icon-btn {
+  background: none;
+  border: 0;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.6875rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 2px;
+}
+
+.icon-btn:hover { color: var(--ink); background: var(--paper-sunk); }
+
+.quote__note, .quote__tags-input {
+  width: 100%;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.375rem 0.5rem;
+  resize: vertical;
+  margin-bottom: 0.25rem;
+}
+
+.quote__note::placeholder, .quote__tags-input::placeholder { color: var(--ink-faint); }
+
+.tags { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+
+.tag {
+  font-size: 0.625rem;
+  font-family: var(--mono);
+  color: var(--ink-soft);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  cursor: pointer;
+}
+
+.tag[aria-pressed="true"] {
+  background: var(--marker-wash);
+  border-color: var(--marker);
+  color: var(--marker);
+}
+
+.tag__count {
+  margin-left: 0.3rem;
+  color: var(--ink-faint);
+  font-size: 0.5625rem;
+}
+
+.tag[aria-pressed="true"] .tag__count { color: inherit; }
+
+/* A newly saved quote is scrolled into view; this says which one it was. */
+.quote--new { animation: quote-in 1.8s ease-out; }
+
+@keyframes quote-in {
+  0%, 25% { background: var(--marker-wash); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quote--new { animation: none; background: var(--marker-wash); }
+}
+
+.swatches { display: flex; gap: 0.25rem; }
+
+.swatch {
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  padding: 0;
+}
+
+.swatch--amber { background: var(--dot-amber); }
+.swatch--teal { background: var(--dot-teal); }
+.swatch--rose { background: var(--dot-rose); }
+.swatch--violet { background: var(--dot-violet); }
+.swatch--sage { background: var(--dot-sage); }
+
+.swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--ink-soft); }
+
+/* ------------------------------------------------------------------ dock -- */
+
+.dock {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--rule);
+  background: var(--paper-raised);
+}
+
+.dock__stage {
+  display: none;
+  background: #000;
+  border-bottom: 1px solid var(--rule);
+  text-align: center;
+}
+
+/* Expanded opens to a reference size, but how much of the window the video
+   deserves depends on what you are doing, so it is draggable from there. */
+.dock[data-state="expanded"] .dock__stage {
+  display: block;
+  height: var(--dock-height, 34vh);
+}
+
+/* Hiding the player must never hide the control that brings it back, or the
+ * state becomes a trap that survives reloads. Hidden collapses the bar to a
+ * strip carrying just the restore button, in the same place it always sits. */
+.dock[data-state="hidden"] .dock__bar {
+  justify-content: flex-end;
+  padding: 0.25rem 1rem;
+}
+
+.dock[data-state="hidden"] .dock__bar > *:not(#dock-toggle) { display: none; }
+
+/* The restore control carries a word rather than a glyph: with the transport
+   gone there is no context left to read an icon against. */
+.dock[data-state="hidden"] #dock-toggle {
+  width: auto;
+  padding: 0 0.625rem;
+  font-size: 0.6875rem;
+}
+
+.dock__stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.dock__grip {
+  display: none;
+  height: 9px;
+  cursor: ns-resize;
+  background: var(--paper-raised);
+  border-bottom: 1px solid var(--rule);
+  position: relative;
+  touch-action: none;
+}
+
+.dock[data-state="expanded"] .dock__grip { display: block; }
+
+.dock__grip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2.5rem;
+  height: 3px;
+  margin: -1.5px 0 0 -1.25rem;
+  border-radius: 2px;
+  background: var(--rule);
+}
+
+.dock__grip:hover::after,
+.dock__grip:focus-visible::after { background: var(--marker); }
+
+.dock--resizing { user-select: none; }
+.dock--resizing .dock__grip::after { background: var(--marker); }
+
+/* Audio-only recordings still need the element for playback, but there is
+ * nothing to look at, so the stage never opens. */
+.dock[data-media="audio"] .dock__stage { display: none; }
+
+.dock__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+}
+
+.transport {
+  font: inherit;
+  font-size: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.transport:hover { border-color: var(--marker); color: var(--marker); }
+
+.clock {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+
+.clock--muted { color: var(--ink-faint); }
+
+.scrub {
+  flex: 1 1 auto;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 3px;
+  background: var(--rule);
+  border-radius: 2px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--marker);
+  border: 0;
+}
+
+.scrub::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--marker);
+  border: 0;
+}
+
+.follow {
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--marker);
+  background: var(--marker-wash);
+  border: 1px solid var(--marker);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+/* -------------------------------------------------------------- quotebar -- */
+
+.quotebar {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.4rem 0.625rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+}
+
+.quotebar__time {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--marker);
+}
+
+.quotebar__colors { display: flex; gap: 0.25rem; }
+
+.quotebar__action {
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--rule);
+  padding: 0.1rem 0 0.1rem 0.625rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quotebar__action:hover { color: var(--ink); }
+
+/* ------------------------------------------------------------ responsive -- */
+
+@media (max-width: 60rem) {
+  :root { --gutter: 0rem; --spine-gap: 0rem; --pad-x: 1.25rem; }
+
+  .transcript::before, .spine-marker { display: none; }
+
+  .chunk { grid-template-columns: 1fr; }
+  .chunk__time { grid-column: 1; justify-self: start; padding-top: 0; }
+  .chunk__body { grid-column: 1; }
+  .chunk--cursor .chunk__body { box-shadow: none; }
+
+  .sidebar { position: fixed; inset: var(--topbar-h) 0 0 auto; width: min(22rem, 100%); z-index: 30; }
+  .sidebar[hidden] { display: none; }
+  .topbar { flex-wrap: wrap; height: auto; padding: 0.5rem 0.75rem; }
+  .topbar__search { order: 3; flex-basis: 100%; }
+}
