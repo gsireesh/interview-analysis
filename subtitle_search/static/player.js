@@ -134,7 +134,6 @@ export function initPlayer(ctx) {
   if (!playable.length) {
     // Say so rather than just removing the player -- an unexplained missing
     // control reads as a bug, and this is usually a folder that needs its media.
-    dock.dataset.state = "hidden";
     dock.hidden = true;
     ctx.notify(
       "No media file found in this folder, so there is nothing to play. The transcript still works.",
@@ -143,12 +142,16 @@ export function initPlayer(ctx) {
     return;
   }
 
+  // The transport is how you reach the recording at all, so it is always on
+  // screen. Only the video surface collapses -- and with nothing to collapse on
+  // an audio-only recording, the control for it goes away rather than sitting
+  // there doing nothing.
   const anyVideo = playable.some((part) => part.media_kind === "video");
-  const states = anyVideo ? ["minimized", "expanded", "hidden"] : ["minimized", "hidden"];
-  // Whether you want the video showing is a real preference worth remembering.
-  // Hiding the player is not: it is a within-session move, and restoring it on
-  // load would mean opening with no transport in sight. So a session always
-  // starts with the player at least minimized.
+  const states = anyVideo ? ["minimized", "expanded"] : ["minimized"];
+  dockToggle.hidden = !anyVideo;
+
+  // Whether you want the video showing is worth remembering between sessions.
+  // A stored state from an older build may name one that no longer exists.
   const stored = localStorage.getItem(DOCK_KEY);
   const opening = stored === "expanded" && anyVideo ? "expanded" : "minimized";
   dock.dataset.state = states.includes(opening) ? opening : "minimized";
@@ -166,17 +169,12 @@ export function initPlayer(ctx) {
   });
 
   function syncDockLabel() {
-    const state = dock.dataset.state;
-    const labels = {
-      minimized: "Show video",
-      expanded: "Hide video",
-      hidden: "Show the player again",
-    };
-    dockToggle.title = labels[state] || "Toggle video";
-    dockToggle.setAttribute("aria-label", labels[state] || "Toggle video");
-    // Named rather than drawn once the transport is gone: an icon alone would
-    // leave no way to tell what the strip does.
-    dockToggle.textContent = state === "hidden" ? "Player" : state === "expanded" ? "▤" : "▣";
+    const expanded = dock.dataset.state === "expanded";
+    const label = expanded ? "Hide video" : "Show video";
+    dockToggle.title = label;
+    dockToggle.setAttribute("aria-label", label);
+    dockToggle.setAttribute("aria-expanded", String(expanded));
+    dockToggle.textContent = expanded ? "▤" : "▣";
   }
 
   media.addEventListener("play", () => {

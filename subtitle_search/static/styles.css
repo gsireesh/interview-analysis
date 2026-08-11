@@ -874,23 +874,9 @@ mark.hl--noted::after {
   height: var(--dock-height, 34vh);
 }
 
-/* Hiding the player must never hide the control that brings it back, or the
- * state becomes a trap that survives reloads. Hidden collapses the bar to a
- * strip carrying just the restore button, in the same place it always sits. */
-.dock[data-state="hidden"] .dock__bar {
-  justify-content: flex-end;
-  padding: 0.25rem 1rem;
-}
-
-.dock[data-state="hidden"] .dock__bar > *:not(#dock-toggle) { display: none; }
-
-/* The restore control carries a word rather than a glyph: with the transport
-   gone there is no context left to read an icon against. */
-.dock[data-state="hidden"] #dock-toggle {
-  width: auto;
-  padding: 0 0.625rem;
-  font-size: 0.6875rem;
-}
+/* The transport bar has no collapsed state: it is always on screen whenever
+ * there is a recording at all. Only the video surface above it opens and
+ * closes. */
 
 .dock__stage video {
   width: 100%;
