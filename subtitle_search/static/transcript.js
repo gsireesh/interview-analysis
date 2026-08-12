@@ -60,6 +60,40 @@ function partBreak(ctx, part) {
   return row;
 }
 
+/**
+ * Break open any block the reader has asked to see line by line.
+ *
+ * Splitting is a view, not an edit: nothing is written, because there is nothing
+ * to record yet. A block that merged two people is still one run of one label
+ * until somebody says otherwise -- this only exposes the seams so each line can
+ * be assigned, and the assignment is what persists. Cue ids are stable across a
+ * rebuild, so the split survives one.
+ */
+export function expandChunks(chunks, cueById, split) {
+  if (!split.size) return chunks;
+  const out = [];
+  for (const chunk of chunks) {
+    if (!chunk.cue_ids.some((id) => split.has(id))) {
+      out.push(chunk);
+      continue;
+    }
+    chunk.cue_ids.forEach((id, position) => {
+      const cue = cueById.get(id);
+      out.push({
+        ...chunk,
+        id: `${chunk.id}:${id}`,
+        cue_ids: [id],
+        paragraphs: [[id]],
+        start: cue ? cue.start : chunk.start,
+        end: cue ? cue.end : chunk.end,
+        split: true,
+        starts_part: chunk.starts_part && position === 0,
+      });
+    });
+  }
+  return out.map((chunk, index) => ({ ...chunk, index }));
+}
+
 /** Build a chunk's reading view: speaker label, then prose split by pause. */
 function fillBody(ctx, chunk, body) {
   const parts = [];
@@ -109,7 +143,7 @@ export function renderTranscript(ctx) {
     }
 
     const article = document.createElement("article");
-    article.className = "chunk";
+    article.className = chunk.split ? "chunk chunk--split" : "chunk";
     article.dataset.chunkId = chunk.id;
 
     const time = document.createElement("button");

@@ -1886,3 +1886,13 @@ mark.hl--noted::after {
   border-radius: 2px;
   padding: 0 0.3rem;
 }
+
+/* A block broken open for labelling. Marked, because a run of one-line blocks
+   otherwise looks like a transcript that arrived that way. */
+.chunk--split .chunk__body {
+  border-left: 2px solid var(--rule);
+  padding-left: 0.625rem;
+  margin-left: -0.75rem;
+}
+
+.chunk--split.chunk--cursor .chunk__body { border-left-color: var(--marker); }

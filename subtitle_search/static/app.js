@@ -12,6 +12,7 @@ import { $, api, formatTime } from "./util.js";
 import {
   applyHighlights,
   cacheGeometry,
+  expandChunks,
   chunkIndexAtScroll,
   chunkIndexAtTime,
   flashCue,
@@ -71,6 +72,9 @@ const ctx = {
   cursorIndex: 0,
   currentTime: 0,
   chunks: [],
+  // Blocks as the server grouped them, before any are broken open.
+  serverChunks: [],
+  splitCues: new Set(),
   cueById: new Map(),
   cueByIndex: new Map(),
   highlights: [],
@@ -124,6 +128,11 @@ function syncFollowButton() {
   ctx.el.follow.hidden = !(playing && ctx.mode === "reading");
 }
 
+/** Display blocks: the server's grouping, with any split ones broken open. */
+function regroup(ctx) {
+  ctx.chunks = expandChunks(ctx.serverChunks, ctx.cueById, ctx.splitCues);
+}
+
 /* ------------------------------------------------------------------ load -- */
 
 async function load() {
@@ -144,7 +153,7 @@ async function load() {
 
   const data = await api(`/api/recordings/${ctx.recordingId}`);
   ctx.data = data;
-  ctx.chunks = data.transcript.chunks;
+  ctx.serverChunks = data.transcript.chunks;
   ctx.parts = data.transcript.parts || [];
   ctx.highlights = data.highlights;
   ctx.knownTags = data.known_tags;
@@ -153,6 +162,7 @@ async function load() {
     ctx.cueById.set(cueItem.id, cueItem);
     ctx.cueByIndex.set(cueItem.index, cueItem);
   }
+  regroup(ctx);
 
   document.title = data.title;
   ctx.el.title.textContent = data.title;
@@ -211,7 +221,7 @@ async function load() {
   ctx.onTranscriptChanged = (payload, { keepEditingCue } = {}) => {
     exitEdit(ctx);
     ctx.data = payload;
-    ctx.chunks = payload.transcript.chunks;
+    ctx.serverChunks = payload.transcript.chunks;
     ctx.parts = payload.transcript.parts || [];
     ctx.highlights = payload.highlights;
     ctx.cueById = new Map();
@@ -221,6 +231,7 @@ async function load() {
       ctx.cueByIndex.set(item.index, item);
     }
     ctx.paintedCues = new Set();
+    regroup(ctx);
 
     renderTranscript(ctx);
     applyHighlights(ctx);
@@ -444,6 +455,23 @@ document.addEventListener("keydown", (event) => {
       event.preventDefault();
       enterEdit(ctx, ctx.cursorIndex);
       break;
+    case "s": {
+      event.preventDefault();
+      // Break the block at the cursor into its captions, so a back-and-forth
+      // Zoom filed as one turn can be labelled line by line.
+      const chunk = ctx.chunks[ctx.cursorIndex];
+      if (!chunk || chunk.cue_ids.length < 2) {
+        ctx.notify("That block is already a single line.");
+        break;
+      }
+      const first = chunk.cue_ids[0];
+      chunk.cue_ids.forEach((id) => ctx.splitCues.add(id));
+      regroup(ctx);
+      renderTranscript(ctx);
+      applyHighlights(ctx);
+      setCursor(ctx, ctx.chunks.findIndex((c) => c.cue_ids[0] === first), { scroll: true });
+      break;
+    }
     case "h":
       event.preventDefault();
       save(ctx, {});

@@ -138,6 +138,7 @@ playback**, and a "Follow along" button appears to re-attach.
 | `c` | copy the selection with speaker and timestamp |
 | `f` | toggle following |
 | `[` / `]` | slower / faster |
+| `s` | break this block into its captions |
 | `1`…`9` | assign this block to a speaker, then move on |
 | `Esc` | clear selection |
 
@@ -216,6 +217,12 @@ The keys are shown in a strip under the header, so the bindings are never
 something to remember. Pressing one assigns the block at the cursor and moves to
 the next, which makes a labelling pass a run of keypresses: `1 2 1 2` down the
 transcript.
+
+When a block holds more than one person — Zoom routinely files a trailing
+comment under whoever spoke before it — `s` breaks it into its captions so each
+can be assigned separately, and `1 2 1 2` carries on. Splitting writes nothing:
+it only exposes the seams, and the assignment is what persists. The keys need a
+roster, so a transcript with no `NOTE speakers:` line has nothing to press.
 
 Once anyone is on the roster, **joining follows assignment**: only rostered
 speakers merge, and whatever label the transcript arrived with stays line by
