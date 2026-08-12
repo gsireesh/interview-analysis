@@ -191,6 +191,8 @@ class Transcript:
     #: How speakers were determined, or "none" if chunking fell back to pauses.
     speaker_detection: str = "colon-prefix"
     parts: list[Part] = field(default_factory=list)
+    #: Speakers assigned by hand, with the key that assigns each one.
+    roster: list[dict] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self._by_id = {cue.id: cue for cue in self.cues}
@@ -267,5 +269,6 @@ class Transcript:
             "cues": [c.to_dict() for c in self.cues],
             "chunks": [c.to_dict() for c in self.chunks],
             "parts": [p.to_dict() for p in self.parts],
+            "roster": self.roster,
             "diagnostics": self.diagnostics(),
         }

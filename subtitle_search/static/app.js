@@ -34,6 +34,7 @@ const ctx = {
     title: $("title"),
     meta: $("meta"),
     notices: $("notices"),
+    roster: $("roster"),
     sidebar: $("sidebar"),
     panelSearch: $("panel-search"),
     panelHighlights: $("panel-highlights"),
@@ -186,6 +187,27 @@ async function load() {
    * would mean reimplementing the chunker in the browser. Re-rendering and
    * returning to the line being worked on is both simpler and always right.
    */
+  /** The speaker keys, shown so the bindings are never a thing you remember. */
+  ctx.renderRoster = () => {
+    const roster = (ctx.data?.transcript?.roster || []).filter((entry) => entry.key);
+    ctx.el.roster.hidden = !roster.length;
+    if (!roster.length) return;
+    ctx.el.roster.innerHTML =
+      `<span class="roster__lead">assign this block</span>` +
+      roster
+        .map(
+          (entry) =>
+            `<button class="roster__who" type="button" data-speaker="${entry.name.replace(/"/g, "&quot;")}">
+               <kbd>${entry.key}</kbd>${entry.name.replace(/</g, "&lt;")}</button>`
+        )
+        .join("");
+  };
+
+  ctx.el.roster.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-speaker]");
+    if (button) assignSpeaker(ctx, button.dataset.speaker);
+  });
+
   ctx.onTranscriptChanged = (payload, { keepEditingCue } = {}) => {
     exitEdit(ctx);
     ctx.data = payload;
@@ -204,6 +226,7 @@ async function load() {
     applyHighlights(ctx);
     renderList(ctx);
 
+    ctx.renderRoster();
     const index = keepEditingCue
       ? ctx.chunks.findIndex((chunk) => chunk.cue_ids.includes(keepEditingCue))
       : ctx.cursorIndex;
@@ -220,6 +243,7 @@ async function load() {
   // Quotes are the output of a reading session, so that is what the sidebar
   // opens on. Search is a keystroke away with `/`.
   ctx.showTab("highlights");
+  ctx.renderRoster();
   setCursor(ctx, 0);
 
   // A link from the library or the themes board carries a moment with it.
@@ -332,6 +356,39 @@ window.addEventListener("resize", () => {
   updateSpine(ctx);
 });
 
+/**
+ * Give the block at the cursor a speaker, then move to the next one.
+ *
+ * Whole block rather than one caption: the cursor sits on a block, and on a
+ * single-speaker transcript every caption *is* a block, which is exactly the
+ * case this exists for. Advancing afterwards is what makes a labelling pass a
+ * run of keypresses rather than a click each time.
+ */
+async function assignSpeaker(ctx, speaker) {
+  const chunk = ctx.chunks[ctx.cursorIndex];
+  if (!chunk || !speaker) return;
+  if (chunk.speaker === speaker) {
+    setCursor(ctx, ctx.cursorIndex + 1, { scroll: true });
+    return;
+  }
+
+  const cues = chunk.cue_ids;
+  try {
+    const result = await api(
+      `/api/recordings/${ctx.recordingId}/cues/${cues[0]}/speaker`,
+      { method: "PATCH", body: { speaker, through: cues[cues.length - 1] } }
+    );
+    if (result.backup_created) ctx.notify(`Original transcript saved as ${result.backup_created}.`);
+    const wasAt = ctx.cursorIndex;
+    ctx.onTranscriptChanged(result.recording);
+    // Blocks may have merged, so step past the one this cue now belongs to.
+    const now = ctx.chunks.findIndex((c) => c.cue_ids.includes(cues[cues.length - 1]));
+    setCursor(ctx, (now < 0 ? wasAt : now) + 1, { scroll: true });
+  } catch (error) {
+    ctx.notify(`Could not assign that speaker: ${error.message}`, { kind: "warn", key: null });
+  }
+}
+
 /* -------------------------------------------------------------- keyboard -- */
 
 const TYPING = new Set(["INPUT", "TEXTAREA", "SELECT"]);
@@ -339,6 +396,13 @@ const TYPING = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 document.addEventListener("keydown", (event) => {
   if (TYPING.has(event.target.tagName) || event.target.isContentEditable) return;
   if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+  const bound = (ctx.data?.transcript?.roster || []).find((entry) => entry.key === event.key);
+  if (bound) {
+    event.preventDefault();
+    assignSpeaker(ctx, bound.name);
+    return;
+  }
 
   switch (event.key) {
     case "j":

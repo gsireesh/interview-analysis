@@ -1839,3 +1839,50 @@ mark.hl--noted::after {
   .cue-line { grid-template-columns: 1.25rem 3rem minmax(0, 1fr); }
   .cue-line__who { grid-column: 1 / -1; }
 }
+
+/* The speaker keys, on screen so the bindings are never something to remember.
+   Digits by default: nothing else in the reader uses them, and 1-5 fall under
+   the hand that is not on the trackpad. */
+.roster {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  padding: 0.375rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-sunk);
+}
+
+.roster__lead {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-faint);
+}
+
+.roster__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem 0.1rem 0.25rem;
+  cursor: pointer;
+}
+
+.roster__who:hover { border-color: var(--marker); }
+
+.roster__who kbd {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--marker);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0 0.3rem;
+}

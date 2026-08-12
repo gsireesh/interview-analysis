@@ -201,14 +201,91 @@ def test_an_assigned_speaker_survives_reparsing():
 
 
 def test_the_roster_round_trips():
-    from subtitle_search.vtt import read_roster, write_roster
+    from subtitle_search.vtt import read_roster, read_speakers, write_roster
 
     vtt = "WEBVTT\n\n1\n00:00:01.000 --> 00:00:05.000\nA line.\n"
-    written = write_roster(vtt, ["Ada Lovelace", "Interviewer"])
+    written = write_roster(vtt, [{"key": None, "name": "Ada Lovelace"},
+                                 {"key": None, "name": "Interviewer"}])
 
     assert read_roster(written) == ["Ada Lovelace", "Interviewer"]
     assert written.startswith("WEBVTT")
     # Replacing rather than stacking a second one.
-    again = write_roster(written, ["Ada Lovelace", "Interviewer", "Rita Alvarez"])
+    again = write_roster(written, read_speakers(written) + [{"key": None, "name": "Rita Alvarez"}])
     assert again.count("NOTE speakers:") == 1
     assert read_roster(again)[-1] == "Rita Alvarez"
+
+
+def test_speakers_get_a_key_each():
+    """Digits by default, because nothing else in the reader uses them."""
+    from subtitle_search.vtt import read_speakers
+
+    vtt = "WEBVTT\n\nNOTE speakers: Ada Lovelace, Interviewer\n\n"
+    assert read_speakers(vtt) == [
+        {"key": "1", "name": "Ada Lovelace"},
+        {"key": "2", "name": "Interviewer"},
+    ]
+
+
+def test_a_chosen_key_is_kept_and_not_reused():
+    from subtitle_search.vtt import read_speakers
+
+    vtt = "WEBVTT\n\nNOTE speakers: q=Note taker, Ada Lovelace, 1=Rita Alvarez\n\n"
+    entries = read_speakers(vtt)
+
+    assert {e["name"]: e["key"] for e in entries} == {
+        "Note taker": "q",
+        "Rita Alvarez": "1",
+        # 1 was taken by an explicit choice, so the bare name gets the next free one.
+        "Ada Lovelace": "2",
+    }
+
+
+def test_a_name_containing_an_equals_sign_is_not_split():
+    from subtitle_search.vtt import read_speakers
+
+    entries = read_speakers("WEBVTT\n\nNOTE speakers: Team A=B liaison\n\n")
+    assert entries == [{"key": "1", "name": "Team A=B liaison"}]
+
+
+def test_the_roster_reaches_the_transcript():
+    vtt = (
+        "WEBVTT\n\nNOTE speakers: 1=Ada Lovelace, s=Rita Alvarez\n\n"
+        "1\n00:00:01.000 --> 00:00:05.000\nAda Lovelace: One.\n"
+    )
+    assert parse_vtt(vtt).roster == [
+        {"key": "1", "name": "Ada Lovelace"},
+        {"key": "s", "name": "Rita Alvarez"},
+    ]
+
+
+def test_a_roster_makes_joining_follow_assignment():
+    """Otherwise the first assignment collapses every unlabelled line that
+    follows it into one block, and the next keypress relabels all of them."""
+    vtt = (
+        "WEBVTT\n\nNOTE speakers: 1=Interviewer, 2=Participant\n\n"
+        "1\n00:00:01.000 --> 00:00:05.000\nInterviewer: Assigned already.\n\n"
+        "2\n00:00:06.000 --> 00:00:10.000\nSireesh Gururaja: Not yet.\n\n"
+        "3\n00:00:11.000 --> 00:00:15.000\nSireesh Gururaja: Nor this.\n\n"
+        "4\n00:00:16.000 --> 00:00:20.000\nSireesh Gururaja: Nor this one.\n"
+    )
+    chunks = parse_vtt(vtt).chunks
+
+    # The label the transcript arrived with stays line by line, so a pass can
+    # work through it one caption at a time.
+    assert [c.cue_ids for c in chunks] == [["c0"], ["c1"], ["c2"], ["c3"]]
+
+
+def test_rostered_speakers_still_join_to_each_other():
+    vtt = (
+        "WEBVTT\n\nNOTE speakers: 1=Interviewer, 2=Participant\n\n"
+        "1\n00:00:01.000 --> 00:00:05.000\nInterviewer: One.\n\n"
+        "2\n00:00:06.000 --> 00:00:10.000\nInterviewer: Two.\n\n"
+        "3\n00:00:11.000 --> 00:00:15.000\nParticipant: Three.\n"
+    )
+    assert [c.cue_ids for c in parse_vtt(vtt).chunks] == [["c0", "c1"], ["c2"]]
+
+
+def test_without_a_roster_joining_is_unchanged():
+    """A plain Zoom transcript must read exactly as it did before any of this."""
+    transcript = parse_vtt(fixtures.COLON_PREFIX)
+    assert [c.cue_ids for c in transcript.chunks] == [["c0", "c1", "c2"], ["c3"], ["c4"]]

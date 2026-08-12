@@ -23,7 +23,7 @@ from .editing import BACKUP_SUFFIX, backup_path, read_source
 from .highlights import HighlightStore
 from .mediainfo import container_duration
 from .models import Part, Transcript
-from .vtt import VTTParseError, assemble_session, parse_cues, session_digest
+from .vtt import VTTParseError, assemble_session, parse_cues, read_speakers, session_digest
 
 #: Searched in order -- video first, since the collapsible pane can show it and
 #: an audio-only fallback is a strictly smaller feature.
@@ -210,6 +210,7 @@ def build_transcript(folder: Path, part_files: list[PartFiles]) -> tuple[Transcr
                 "index": index,
                 "method": method,
                 "sha256": digest,
+                "roster": read_speakers(content),
             }
         )
 

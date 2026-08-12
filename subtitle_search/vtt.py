@@ -47,18 +47,61 @@ _CUE_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 _ROSTER_RE = re.compile(r"^NOTE\s+speakers:\s*(.+)$", re.IGNORECASE)
 
 
-def read_roster(content: str) -> list[str]:
-    """Speaker names that were assigned by hand, and must always be honoured."""
+#: Keys offered to speakers that do not name one. Digits, because they already
+#: mean "pick item N" and nothing else in the reader uses them -- and 1-5 fall
+#: under the left hand, which is the one not on the trackpad.
+DEFAULT_KEYS = "123456789"
+
+
+def read_speakers(content: str) -> list[dict]:
+    """The roster, as ``{"key": "1", "name": "Ada Lovelace"}`` entries.
+
+    Written as ``NOTE speakers: 1=Ada Lovelace, 2=Participant``. A bare name is
+    allowed and gets the next free key, so a roster typed by hand does not have
+    to bother with the left-hand column.
+    """
     for raw in content.split("\n"):
         match = _ROSTER_RE.match(raw.strip())
-        if match:
-            return [name.strip() for name in match.group(1).split(",") if name.strip()]
+        if not match:
+            continue
+        entries: list[dict] = []
+        for item in match.group(1).split(","):
+            item = item.strip()
+            if not item:
+                continue
+            key, sep, name = item.partition("=")
+            # Only a single character counts as a key; anything longer is a name
+            # that happens to contain an equals sign.
+            if sep and len(key.strip()) == 1 and name.strip():
+                entries.append({"key": key.strip(), "name": name.strip()})
+            else:
+                entries.append({"key": None, "name": item})
+        return assign_keys(entries)
     return []
 
 
-def write_roster(content: str, names: list[str]) -> str:
+def assign_keys(entries: list[dict]) -> list[dict]:
+    """Give every speaker a key, leaving the ones already chosen alone."""
+    taken = {e["key"] for e in entries if e.get("key")}
+    spare = [k for k in DEFAULT_KEYS if k not in taken]
+    out = []
+    for entry in entries:
+        key = entry.get("key") or (spare.pop(0) if spare else None)
+        out.append({"key": key, "name": entry["name"]})
+    return out
+
+
+def read_roster(content: str) -> list[str]:
+    """Just the names, for the parser -- an assignment is never a guess."""
+    return [entry["name"] for entry in read_speakers(content)]
+
+
+def write_roster(content: str, entries: list[dict]) -> str:
     """Put the roster back, replacing any previous one, just under the header."""
-    line = f"NOTE speakers: {', '.join(names)}"
+    rendered = ", ".join(
+        f"{e['key']}={e['name']}" if e.get("key") else e["name"] for e in assign_keys(entries)
+    )
+    line = f"NOTE speakers: {rendered}"
     lines = content.split("\n")
     for index, raw in enumerate(lines):
         if _ROSTER_RE.match(raw.strip()):
@@ -365,7 +408,9 @@ def parse_cues(content: str) -> tuple[list[Cue], str]:
     return cues, method
 
 
-def build_chunks(cues: list[Cue], speaker_count: int) -> list[Chunk]:
+def build_chunks(
+    cues: list[Cue], speaker_count: int, assigned: set[str] | None = None
+) -> list[Chunk]:
     """Group cues into display blocks.
 
     With two or more speakers a chunk is one contiguous run from one of them:
@@ -379,7 +424,14 @@ def build_chunks(cues: list[Cue], speaker_count: int) -> list[Chunk]:
 
     No speaker at all is a different situation -- a transcript that never had
     labels -- so those still break on long pauses, which at least reads.
+
+    Once anyone has been assigned by hand, joining follows the assignment:
+    contiguous cues merge only when their speaker is on the roster. Whatever
+    label the transcript arrived with stays line by line, so a labelling pass can
+    work through it one caption at a time instead of watching the unlabelled
+    remainder collapse into a single block after the first assignment.
     """
+    assigned = assigned or set()
     chunks: list[Chunk] = []
     run: list[Cue] = []
 
@@ -415,7 +467,9 @@ def build_chunks(cues: list[Cue], speaker_count: int) -> list[Chunk]:
             elif speaker_count == 1:
                 boundary = True
             elif speaker_count >= 2:
-                boundary = cue.speaker != run[-1].speaker
+                same = cue.speaker == run[-1].speaker
+                # With a roster in play, only assigned speakers join up.
+                boundary = not same or (bool(assigned) and cue.speaker not in assigned)
             else:
                 boundary = cue.start - run[-1].end > FALLBACK_CHUNK_GAP
             if boundary:
@@ -439,7 +493,8 @@ def parse_vtt(content: str, source_name: str = "transcript.vtt") -> Transcript:
     for cue in cues:
         if cue.speaker and cue.speaker not in speakers:
             speakers.append(cue.speaker)
-    chunks = build_chunks(cues, speaker_count=len(speakers))
+    roster = read_speakers(content)
+    chunks = build_chunks(cues, len(speakers), {e['name'] for e in roster})
     digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
     return Transcript(
         cues=cues,
@@ -448,6 +503,7 @@ def parse_vtt(content: str, source_name: str = "transcript.vtt") -> Transcript:
         source_name=source_name,
         sha256=digest,
         speaker_detection=method,
+        roster=roster,
     )
 
 
@@ -471,7 +527,10 @@ def assemble_session(specs: list[dict], parts: list[Part], source_name: str) -> 
         if cue.speaker and cue.speaker not in speakers:
             speakers.append(cue.speaker)
 
-    chunks = build_chunks(combined, speaker_count=len(speakers))
+    roster = assign_keys(
+        list({e['name']: e for spec in specs for e in spec.get('roster', [])}.values())
+    )
+    chunks = build_chunks(combined, len(speakers), {e['name'] for e in roster})
     digest = session_digest([spec["sha256"] for spec in specs])
     methods = {spec["method"] for spec in specs}
     method = methods.pop() if len(methods) == 1 else "mixed"
@@ -484,6 +543,7 @@ def assemble_session(specs: list[dict], parts: list[Part], source_name: str) -> 
         sha256=digest,
         speaker_detection=method,
         parts=parts,
+        roster=roster,
     )
 
 

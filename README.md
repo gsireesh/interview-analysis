@@ -138,6 +138,7 @@ playback**, and a "Follow along" button appears to re-attach.
 | `c` | copy the selection with speaker and timestamp |
 | `f` | toggle following |
 | `[` / `]` | slower / faster |
+| `1`…`9` | assign this block to a speaker, then move on |
 | `Esc` | clear selection |
 
 ## Correcting the transcript
@@ -195,6 +196,32 @@ people is worse than none, so:
 
 A transcript with *no* speaker labels at all is a different situation and still
 breaks on long pauses, which at least reads.
+
+### Labelling with the keyboard
+
+Name the speakers at the top of the transcript and each one gets a key:
+
+```
+WEBVTT
+
+NOTE speakers: 1=Interviewer, 2=Participant
+```
+
+Digits by default — nothing else in the reader uses them, and `1`–`5` fall under
+the hand that is not on the trackpad. Any single character works if you would
+rather: `q=Note taker`. A bare name gets the next free digit, so the shorthand
+`NOTE speakers: Interviewer, Participant` is enough.
+
+The keys are shown in a strip under the header, so the bindings are never
+something to remember. Pressing one assigns the block at the cursor and moves to
+the next, which makes a labelling pass a run of keypresses: `1 2 1 2` down the
+transcript.
+
+Once anyone is on the roster, **joining follows assignment**: only rostered
+speakers merge, and whatever label the transcript arrived with stays line by
+line. Without that, the first assignment would collapse every unlabelled line
+after it into one block and the next keypress would relabel all of them at once.
+A transcript with no roster joins exactly as it always did.
 
 ## Quotes
 

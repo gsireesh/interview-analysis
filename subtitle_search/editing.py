@@ -27,7 +27,7 @@ import tempfile
 from pathlib import Path
 
 from .models import Cue
-from .vtt import read_roster, splice_cue, splice_speaker, write_roster
+from .vtt import read_speakers, splice_cue, splice_speaker, write_roster
 
 
 class EditError(ValueError):
@@ -167,10 +167,10 @@ def apply_speaker_edit(
     for cue in sorted(targets, key=lambda c: c.source_start, reverse=True):
         content = splice_speaker(content, cue, speaker, style)
 
-    roster = read_roster(content)
-    if speaker not in roster:
-        roster.append(speaker)
-    content = write_roster(content, roster)
+    entries = read_speakers(content)
+    if not any(entry["name"] == speaker for entry in entries):
+        entries.append({"key": None, "name": speaker})
+    content = write_roster(content, entries)
 
     write_atomically(vtt_path, content)
     recording.sources[part_index] = content
