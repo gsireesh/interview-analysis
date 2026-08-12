@@ -1785,3 +1785,31 @@ mark.hl--noted::after {
 
 .tagfield__option--new .tagfield__tag { font-style: italic; }
 .tagfield__option--new .tagfield__use { color: var(--marker); }
+
+/* Playback speed. Sits with the clock because it is a property of the playing,
+   not a setting -- and gets a word rather than only a number so it is legible
+   next to two timecodes. */
+.rate { display: inline-flex; align-items: center; gap: 0.35rem; flex: 0 0 auto; }
+
+.rate__label {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.rate__select {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0.15rem 0.2rem;
+  cursor: pointer;
+}
+
+.rate__select:hover { border-color: var(--ink-faint); }
+.rate__select:focus-visible { border-color: var(--marker); }

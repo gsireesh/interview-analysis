@@ -19,7 +19,7 @@ import {
   setCursor,
   updateSpine,
 } from "./transcript.js";
-import { cue, initPlayer, nudge, seekAndPlay, togglePlay } from "./player.js";
+import { cue, initPlayer, nudge, seekAndPlay, stepRate, togglePlay } from "./player.js";
 import { initSearch } from "./search.js";
 import { copySelection, hideQuoteBar, initHighlights, renderList, save } from "./highlights.js";
 import { enterEdit, exitEdit, isEditing } from "./editing.js";
@@ -58,6 +58,7 @@ const ctx = {
     scrub: $("scrub"),
     clock: $("clock"),
     duration: $("duration"),
+    rate: $("rate"),
     follow: $("follow"),
     quotebar: $("quotebar"),
     quotebarTime: $("quotebar-time"),
@@ -330,6 +331,13 @@ document.addEventListener("keydown", (event) => {
       event.preventDefault();
       nudge(ctx, 5);
       break;
+    case "[":
+    case "]": {
+      event.preventDefault();
+      const rate = stepRate(ctx, event.key === "]" ? 1 : -1);
+      if (rate) ctx.notify(`Playing at ${rate}\u00d7`);
+      break;
+    }
     case "/":
       event.preventDefault();
       ctx.showTab("search");

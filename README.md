@@ -102,6 +102,12 @@ the recording.
 Blocks hang off a **time spine** down the left, with timestamps as ticks. The
 marker on the spine shows where you are.
 
+Playback speed sits in the transport bar, from 0.5x for a mumbled passage up to
+2x for a stretch you already know. Pitch correction is on, so a voice at 1.5x
+still sounds like that person rather than a cartoon — tone is half of why the
+recording is here. The speed is remembered between sessions, survives crossing
+from one recording into the next, and the themes page plays quotes at it too.
+
 The video pane starts minimized and stays that way between sessions. Expanded, it
 can be resized by dragging the grip along its top edge — or by focusing the grip
 and using the arrow keys. The height is remembered, and capped at three quarters
@@ -131,6 +137,7 @@ playback**, and a "Follow along" button appears to re-attach.
 | `h` | save the selection as a quote |
 | `c` | copy the selection with speaker and timestamp |
 | `f` | toggle following |
+| `[` / `]` | slower / faster |
 | `Esc` | clear selection |
 
 ## Correcting the transcript

@@ -12,6 +12,7 @@ import { formatTime } from "./util.js";
 
 const DOCK_KEY = "subtitle-search:dock";
 const HEIGHT_KEY = "subtitle-search:dockHeight";
+export const RATE_KEY = "subtitle-search:rate";
 
 const MIN_STAGE = 120;
 const KEY_STEP = 24;
@@ -101,6 +102,25 @@ function partUrl(ctx, index) {
   return `/api/recordings/${ctx.recordingId}/parts/${index}/media`;
 }
 
+/** The speed you last chose, or normal. */
+export function storedRate() {
+  const value = Number(localStorage.getItem(RATE_KEY));
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+/**
+ * Apply a playback speed to a media element.
+ *
+ * Pitch correction on, or a voice at 1.5x is a cartoon and the tone you kept the
+ * recording for is gone. Safari wants the prefixed spelling.
+ */
+export function applyRate(media, rate) {
+  media.preservesPitch = true;
+  media.mozPreservesPitch = true;
+  media.webkitPreservesPitch = true;
+  media.playbackRate = rate;
+}
+
 /** Point the element at a part and move to a position inside it. */
 async function activate(ctx, index, localTime, { play = false } = {}) {
   const part = ctx.parts[index];
@@ -115,6 +135,9 @@ async function activate(ctx, index, localTime, { play = false } = {}) {
       ctx.el.media.addEventListener("loadedmetadata", resolve, { once: true });
       ctx.el.media.addEventListener("error", resolve, { once: true });
     });
+    // A new source starts at normal speed, so the chosen rate is reapplied
+    // rather than quietly resetting at every interruption in a session.
+    applyRate(ctx.el.media, storedRate());
   }
 
   try {
@@ -158,6 +181,17 @@ export function initPlayer(ctx) {
   syncDockLabel();
 
   duration.textContent = formatTime(ctx.data.duration);
+
+  const rate = ctx.el.rate;
+  if (rate) {
+    rate.value = String(storedRate());
+    applyRate(media, storedRate());
+    rate.addEventListener("change", () => {
+      localStorage.setItem(RATE_KEY, rate.value);
+      applyRate(media, Number(rate.value));
+    });
+  }
+
   initResize(ctx);
   activate(ctx, 0, 0);
 
@@ -253,6 +287,18 @@ export function cue(ctx, target) {
 export function seekAndPlay(ctx, target, { play = false } = {}) {
   if (play) ctx.setMode("following");
   seek(ctx, Math.max(0, target - SEEK_LEAD_IN), { play });
+}
+
+/** Step to the next or previous speed the control offers. */
+export function stepRate(ctx, direction) {
+  const select = ctx.el.rate;
+  if (!select) return null;
+  const options = [...select.options].map((option) => option.value);
+  const next = Math.max(0, Math.min(options.length - 1, options.indexOf(select.value) + direction));
+  select.value = options[next];
+  localStorage.setItem(RATE_KEY, select.value);
+  applyRate(ctx.el.media, Number(select.value));
+  return Number(select.value);
 }
 
 export function nudge(ctx, delta) {

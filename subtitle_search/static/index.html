@@ -79,6 +79,18 @@
     <span class="clock" id="clock">0:00</span>
     <input class="scrub" id="scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek">
     <span class="clock clock--muted" id="duration">0:00</span>
+    <label class="rate">
+      <span class="rate__label">speed</span>
+      <select class="rate__select" id="rate" aria-label="Playback speed">
+        <option value="0.5">0.5&times;</option>
+        <option value="0.75">0.75&times;</option>
+        <option value="1" selected>1&times;</option>
+        <option value="1.25">1.25&times;</option>
+        <option value="1.5">1.5&times;</option>
+        <option value="1.75">1.75&times;</option>
+        <option value="2">2&times;</option>
+      </select>
+    </label>
     <button class="follow" id="follow" type="button" hidden>Follow along</button>
     <button class="btn btn--icon" id="dock-toggle" type="button" title="Expand video">▣</button>
   </div>

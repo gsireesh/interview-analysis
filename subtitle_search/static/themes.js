@@ -16,6 +16,7 @@
  */
 
 import { $, api, escapeHtml, formatTime } from "./util.js";
+import { applyRate, storedRate } from "./player.js";
 import { applyStoredTheme, bindThemeToggle, notify } from "./chrome.js";
 import {
   initSemantics,
@@ -543,7 +544,8 @@ async function playCurrent() {
       el.queueMedia.addEventListener("error", resolve, { once: true });
     });
   }
-  // A little before the first word, as in the reader.
+  // A little before the first word, as in the reader, at the speed set there.
+  applyRate(el.queueMedia, storedRate());
   el.queueMedia.currentTime = Math.max(0, spot.local - 0.75);
   el.queueMedia.play().catch(() => {});
 }
