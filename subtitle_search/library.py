@@ -84,6 +84,48 @@ def tag_index(quotes: list[dict]) -> list[dict]:
     return sorted(summary, key=lambda e: (-e["recording_count"], -e["quote_count"], e["tag"].lower()))
 
 
+def vocabulary(registry) -> list[dict]:
+    """Every tag ever used anywhere in the library, for suggesting completions.
+
+    Wider than ``tag_index``, deliberately. That one reports tags with quotes
+    behind them right now; this one also keeps tags whose last quote was
+    untagged or deleted, because the reason to show a vocabulary while typing is
+    to stop a fifth near-duplicate of a code you already invented.
+
+    Each recording's quotes file already remembers its own tags permanently, so
+    the union of those is durable without another file to keep in sync.
+    """
+    entries: dict[str, dict] = {}
+
+    def entry(tag: str) -> dict:
+        return entries.setdefault(
+            tag, {"tag": tag, "quote_count": 0, "recording_count": 0, "recordings": []}
+        )
+
+    for recording in registry.list():
+        # History first: tags typed here at any point, even if nothing carries
+        # them now.
+        for tag in recording.store.known_tags():
+            entry(tag)
+
+        used: set[str] = set()
+        for highlight in recording.store.list():
+            for tag in highlight.get("tags") or []:
+                item = entry(tag)
+                item["quote_count"] += 1
+                used.add(tag)
+        for tag in used:
+            item = entries[tag]
+            item["recording_count"] += 1
+            item["recordings"].append(recording.id)
+
+    # Most-established first: a tag on many recordings is the one to reuse.
+    return sorted(
+        entries.values(),
+        key=lambda e: (-e["recording_count"], -e["quote_count"], e["tag"].lower()),
+    )
+
+
 def cooccurrence(quotes: list[dict], minimum: int = 1) -> list[dict]:
     """Tags that share a quote.
 

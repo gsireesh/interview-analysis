@@ -73,6 +73,8 @@ const ctx = {
   cueByIndex: new Map(),
   highlights: [],
   knownTags: [],
+  // Every tag used anywhere in the library, for completing as you type.
+  vocabulary: [],
   colors: ["amber"],
   paintedCues: new Set(),
   activeHighlightId: null,
@@ -161,6 +163,15 @@ async function load() {
     `${diagnostics.speakers.length} speakers`,
     data.media_file || "no media",
   ].join("  ·  ");
+
+  // Suggestions span the study, so a tag coined in one interview is offered in
+  // every other one. Not fatal if it fails -- the field still takes free text.
+  api("/api/library/vocabulary")
+    .then((data) => {
+      ctx.vocabulary = data.tags;
+      renderList(ctx);
+    })
+    .catch(() => {});
 
   ctx.onHighlightsChanged = () => {
     applyHighlights(ctx);

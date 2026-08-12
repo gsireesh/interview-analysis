@@ -15,7 +15,15 @@ from fastapi.staticfiles import StaticFiles
 
 from .editing import EditError, apply_cue_edit
 from .highlights import COLORS, HighlightError
-from .library import THEMES_FILENAME, ThemeStore, all_quotes, cooccurrence, tag_index, untagged
+from .library import (
+    THEMES_FILENAME,
+    ThemeStore,
+    all_quotes,
+    cooccurrence,
+    tag_index,
+    untagged,
+    vocabulary,
+)
 from .semantics import (
     EMBEDDINGS_FILENAME,
     Semantics,
@@ -156,6 +164,11 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             "cooccurrence": cooccurrence(quotes, minimum=1),
             "colors": list(COLORS),
         }
+
+    @app.get("/api/library/vocabulary")
+    def get_vocabulary() -> dict:
+        """The tag vocabulary of the whole study, for completing as you type."""
+        return {"tags": vocabulary(registry)}
 
     @app.get("/api/library/quotes")
     def get_library_quotes() -> dict:

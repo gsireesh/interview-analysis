@@ -7,6 +7,7 @@
 import { api, escapeHtml, formatTime } from "./util.js";
 import { applyHighlights, flashCue, scrollToChunk, selectionAnchors } from "./transcript.js";
 import { seekAndPlay } from "./player.js";
+import { mountTagFields } from "./tagfield.js";
 
 export function initHighlights(ctx) {
   renderSwatches(ctx);
@@ -172,16 +173,30 @@ export function renderList(ctx) {
           </span>
         </div>
         <textarea class="quote__note" rows="1" placeholder="Note" data-action="note">${escapeHtml(highlight.note || "")}</textarea>
-        <input class="quote__tags-input" type="text" placeholder="Tags, comma separated"
-               list="known-tags" value="${escapeHtml((highlight.tags || []).join(", "))}" data-action="tags">
+        <div class="tagfield" data-id="${highlight.id}"></div>
       </article>`
     )
     .join("");
 
-  list.insertAdjacentHTML(
-    "beforeend",
-    `<datalist id="known-tags">${ctx.knownTags.map((tag) => `<option value="${escapeHtml(tag)}"></option>`).join("")}</datalist>`
-  );
+  mountTagFields(list, {
+    getTags: (id) => ctx.highlights.find((h) => h.id === id)?.tags || [],
+    // Completions come from the whole library, so a tag coined in one interview
+    // is offered in every other one.
+    getVocabulary: () => ctx.vocabulary,
+    onCommit: (id, tags) => {
+      const highlight = ctx.highlights.find((h) => h.id === id);
+      if (highlight) patch(ctx, highlight, { tags }, { rerender: false });
+    },
+  });
+}
+
+/** Fold a just-used tag into the vocabulary so it completes straight away. */
+function mergeVocabulary(ctx, tags) {
+  for (const tag of tags) {
+    if (!ctx.vocabulary.some((entry) => entry.tag.toLowerCase() === tag.toLowerCase())) {
+      ctx.vocabulary.push({ tag, quote_count: 1, recording_count: 1, recordings: [] });
+    }
+  }
 }
 
 /** Tags that are actually on a quote right now, with how many carry each.
@@ -265,12 +280,6 @@ function bindList(ctx) {
     if (field.dataset.action === "note" && field.value !== (highlight.note || "")) {
       await patch(ctx, highlight, { note: field.value }, { rerender: false });
     }
-    if (field.dataset.action === "tags") {
-      const tags = field.value.split(",").map((tag) => tag.trim()).filter(Boolean);
-      if (tags.join("|") !== (highlight.tags || []).join("|")) {
-        await patch(ctx, highlight, { tags });
-      }
-    }
   };
 
   ctx.el.highlightList.addEventListener("change", commit);
@@ -296,6 +305,7 @@ async function patch(ctx, highlight, body, { rerender = true } = {}) {
     );
     Object.assign(highlight, response.highlight);
     ctx.knownTags = response.known_tags;
+    mergeVocabulary(ctx, highlight.tags || []);
     applyHighlights(ctx);
     if (rerender) renderList(ctx);
   } catch (error) {

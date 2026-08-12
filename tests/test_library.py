@@ -338,3 +338,69 @@ def test_assigning_to_an_unknown_theme_is_a_404(client):
 def test_assigning_without_a_reference_is_a_400(client):
     api, _ = client
     assert api.post("/api/library/themes/assign", json={}).status_code == 400
+
+
+# -- the tag vocabulary ------------------------------------------------
+
+
+def test_vocabulary_spans_every_recording(client):
+    """The point of it: a tag coined in P01 is offered while tagging in P03."""
+    api, registry = client
+    from subtitle_search.library import vocabulary
+
+    tags = {entry["tag"]: entry for entry in vocabulary(registry)}
+    assert set(tags) == {"trust", "timestamps", "tone"}
+    assert tags["timestamps"]["recording_count"] == 3
+    assert tags["timestamps"]["quote_count"] == 3
+    assert tags["tone"]["recording_count"] == 1
+
+
+def test_vocabulary_is_ordered_by_how_established_a_tag_is(client):
+    api, registry = client
+    from subtitle_search.library import vocabulary
+
+    order = [entry["tag"] for entry in vocabulary(registry)]
+    assert order[0] == "timestamps"  # in every recording
+    assert order.index("trust") < order.index("tone")
+
+
+def test_vocabulary_keeps_a_tag_whose_quotes_all_lost_it(client):
+    """Otherwise a code you stopped using stops being suggested, and gets
+    reinvented under a new name a fortnight later."""
+    api, registry = client
+    from subtitle_search.library import vocabulary
+
+    recording = next(r for r in registry.list() if r.title == "P01")
+    quote = recording.store.list()[0]
+
+    # Applied through the store, which is what records it as history.
+    recording.store.update(quote["id"], {"tags": ["provisional"]})
+    recording.store.update(quote["id"], {"tags": []})
+
+    entry = next((e for e in vocabulary(registry) if e["tag"] == "provisional"), None)
+    assert entry is not None, "a tag used once should stay in the vocabulary"
+    assert entry["quote_count"] == 0
+    assert entry["recording_count"] == 0
+
+    # And it is still offered while typing, unlike the filter list.
+    tags = [e["tag"] for e in api.get("/api/library/vocabulary").json()["tags"]]
+    assert "provisional" in tags
+
+
+def test_vocabulary_endpoint(client):
+    api, _ = client
+    body = api.get("/api/library/vocabulary").json()
+
+    assert [entry["tag"] for entry in body["tags"]][0] == "timestamps"
+    assert all({"tag", "quote_count", "recording_count"} <= set(e) for e in body["tags"])
+
+
+def test_vocabulary_of_an_untagged_library_is_empty(tmp_path):
+    root = tmp_path / "study"
+    make_recording(root, "P01", [])
+    registry = RecordingRegistry()
+    registry.add_library(root)
+
+    from subtitle_search.library import vocabulary
+
+    assert vocabulary(registry) == []

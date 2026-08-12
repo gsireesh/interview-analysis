@@ -1679,3 +1679,109 @@ mark.hl--noted::after {
   .stage__body { flex-direction: column; }
   .stage__side { flex: 0 0 auto; max-height: 45%; border-left: 0; border-top: 1px solid var(--rule); }
 }
+
+/* ============================================================== tag field ==
+ *
+ * Tags are tokens, so the field holds tokens. The suggestion list carries how
+ * widely each tag is already used across the study, because the decision it is
+ * there to inform is "reuse this or coin another one".
+ */
+
+.tagfield {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+}
+
+.tagfield:focus-within { border-color: var(--marker); }
+
+.tagfield__chips { display: contents; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 0.1rem 0.2rem 0.1rem 0.5rem;
+}
+
+.chip__x {
+  background: none;
+  border: 0;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font-size: 0.5625rem;
+  line-height: 1;
+  padding: 0.15rem;
+  border-radius: 50%;
+}
+
+.chip__x:hover { color: var(--dot-rose); background: var(--paper-sunk); }
+
+.tagfield__input {
+  flex: 1;
+  min-width: 6rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.6875rem;
+  padding: 0.15rem 0.25rem;
+  outline: none;
+}
+
+.tagfield__input::placeholder { color: var(--ink-faint); }
+
+.tagfield__list {
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: calc(100% + 2px);
+  z-index: 30;
+  margin: 0;
+  padding: 0.2rem;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--paper-raised);
+  border: 1px solid var(--marker);
+  border-radius: 2px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.tagfield__option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.tagfield__option[aria-selected="true"] { background: var(--marker-wash); }
+.tagfield__option:hover { background: var(--paper-sunk); }
+
+.tagfield__tag { font-size: 0.75rem; color: var(--ink); }
+
+/* How established the tag already is -- the reason to pick it over a new one. */
+.tagfield__use {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.tagfield__option--new .tagfield__tag { font-style: italic; }
+.tagfield__option--new .tagfield__use { color: var(--marker); }
