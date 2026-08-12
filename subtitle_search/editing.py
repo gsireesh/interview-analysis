@@ -27,7 +27,7 @@ import tempfile
 from pathlib import Path
 
 from .models import Cue
-from .vtt import splice_cue
+from .vtt import read_roster, splice_cue, splice_speaker, write_roster
 
 
 class EditError(ValueError):
@@ -115,6 +115,75 @@ _WHITESPACE_RE = re.compile(r"\s+")
 def normalize_edit(text: str) -> str:
     """A cue is one line of the source, so newlines and runs of space collapse."""
     return _WHITESPACE_RE.sub(" ", text or "").strip()
+
+
+def apply_speaker_edit(
+    recording, cue_id: str, speaker: str, through_cue_id: str | None = None
+) -> dict:
+    """Reattribute a line, or a run of them, to a different speaker.
+
+    Zoom segments badly: a trailing clause routinely lands under whoever spoke
+    before it, and an in-person recording files the whole room under one name.
+    Both are fixed the same way -- say who actually said this -- so this takes a
+    range rather than a single line, because a mis-segmented answer is usually
+    several captions long.
+
+    The name is written into the transcript as a normal speaker label *and* into
+    a NOTE roster, so re-parsing honours it even when it is a single word on a
+    single line, which detection would never accept on its own.
+    """
+    transcript = recording.transcript
+    first = transcript.cue(cue_id)
+    last = transcript.cue(through_cue_id) if through_cue_id else first
+    if first is None or last is None:
+        raise EditError("those lines are not part of this transcript")
+    if first.index > last.index:
+        first, last = last, first
+    if first.part_index != last.part_index:
+        raise EditError("a run of lines cannot span two recordings")
+
+    speaker = normalize_edit(speaker)
+    if not speaker:
+        raise EditError("a speaker needs a name")
+    if ":" in speaker or "\n" in speaker:
+        raise EditError("a speaker's name cannot contain a colon")
+
+    part_index = first.part_index
+    vtt_path = recording.part_files[part_index].vtt_path
+    content = recording.sources[part_index]
+    style = transcript.speaker_detection
+
+    targets = [
+        cue
+        for cue in transcript.cues
+        if cue.part_index == part_index and first.index <= cue.index <= last.index
+    ]
+    if not targets:
+        raise EditError("no lines in that range")
+
+    backup_created = ensure_backup(vtt_path)
+
+    # Back to front, so each splice leaves the offsets ahead of it untouched.
+    for cue in sorted(targets, key=lambda c: c.source_start, reverse=True):
+        content = splice_speaker(content, cue, speaker, style)
+
+    roster = read_roster(content)
+    if speaker not in roster:
+        roster.append(speaker)
+    content = write_roster(content, roster)
+
+    write_atomically(vtt_path, content)
+    recording.sources[part_index] = content
+    recording.reload_transcript()
+
+    return {
+        "changed": True,
+        "speaker": speaker,
+        "cue_ids": [cue.id for cue in targets],
+        "backup_created": backup_created,
+        "backup_file": backup_path(vtt_path).name,
+        "speakers": recording.transcript.speakers,
+    }
 
 
 def apply_cue_edit(recording, cue_id: str, raw_text: str) -> dict:

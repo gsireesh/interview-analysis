@@ -84,7 +84,7 @@ def test_crlf_and_missing_cue_numbers():
 def test_long_turn_keeps_one_chunk_but_splits_paragraphs():
     transcript = parse_vtt(fixtures.LONG_TURN_WITH_PAUSE)
 
-    assert len(transcript.chunks) == 1
+    assert len(transcript.chunks) == 2
     chunk = transcript.chunks[0]
     # One chunk, one speaker label -- but broken for reading at the 7s pause.
     assert chunk.paragraphs == [["c0", "c1"], ["c2"]]
@@ -158,3 +158,57 @@ def test_a_long_prefix_still_has_to_recur():
     transcript = parse_vtt(vtt)
     assert transcript.speakers == ["Dana Whitfield"]
     assert "Q3 Budget Review: we need numbers" in transcript.cues[1].text
+
+
+def test_a_lone_speaker_is_never_joined():
+    """One label usually means one microphone in a room, not one person talking."""
+    vtt = "WEBVTT\n\n" + "".join(
+        f"{i}\n00:00:{i * 5:02d}.000 --> 00:00:{i * 5 + 4:02d}.000\n"
+        f"Dana Whitfield: Line {i}, said by whoever was nearest.\n\n"
+        for i in range(1, 6)
+    )
+    transcript = parse_vtt(vtt)
+
+    assert transcript.speakers == ["Dana Whitfield"]
+    # Joining on that label would invent a monologue out of a conversation.
+    assert len(transcript.chunks) == len(transcript.cues) == 5
+
+
+def test_joining_resumes_once_a_second_speaker_exists():
+    vtt = (
+        "WEBVTT\n\n"
+        "1\n00:00:01.000 --> 00:00:05.000\nDana Whitfield: One.\n\n"
+        "2\n00:00:06.000 --> 00:00:10.000\nDana Whitfield: Two.\n\n"
+        "3\n00:00:11.000 --> 00:00:15.000\nRafael Ortiz: Three.\n"
+    )
+    transcript = parse_vtt(vtt)
+
+    assert len(transcript.speakers) == 2
+    assert [c.cue_ids for c in transcript.chunks] == [["c0", "c1"], ["c2"]]
+
+
+def test_an_assigned_speaker_survives_reparsing():
+    """A name in the roster is a decision, so the heuristics do not get a vote."""
+    vtt = (
+        "WEBVTT\n\nNOTE speakers: Interviewer\n\n"
+        "1\n00:00:01.000 --> 00:00:05.000\nInterviewer: One line, one word of a name.\n\n"
+        "2\n00:00:06.000 --> 00:00:10.000\nRafael Ortiz: And a normal one.\n"
+    )
+    transcript = parse_vtt(vtt)
+
+    # "Interviewer" is one word appearing once; detection alone would reject it.
+    assert transcript.speakers == ["Interviewer", "Rafael Ortiz"]
+
+
+def test_the_roster_round_trips():
+    from subtitle_search.vtt import read_roster, write_roster
+
+    vtt = "WEBVTT\n\n1\n00:00:01.000 --> 00:00:05.000\nA line.\n"
+    written = write_roster(vtt, ["Ada Lovelace", "Interviewer"])
+
+    assert read_roster(written) == ["Ada Lovelace", "Interviewer"]
+    assert written.startswith("WEBVTT")
+    # Replacing rather than stacking a second one.
+    again = write_roster(written, ["Ada Lovelace", "Interviewer", "Rita Alvarez"])
+    assert again.count("NOTE speakers:") == 1
+    assert read_roster(again)[-1] == "Rita Alvarez"

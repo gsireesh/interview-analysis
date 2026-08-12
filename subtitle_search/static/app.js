@@ -179,6 +179,38 @@ async function load() {
     renderList(ctx);
   };
 
+  /**
+   * Take a rebuilt transcript back wholesale.
+   *
+   * Reassigning a speaker regroups every block after it, so patching in place
+   * would mean reimplementing the chunker in the browser. Re-rendering and
+   * returning to the line being worked on is both simpler and always right.
+   */
+  ctx.onTranscriptChanged = (payload, { keepEditingCue } = {}) => {
+    exitEdit(ctx);
+    ctx.data = payload;
+    ctx.chunks = payload.transcript.chunks;
+    ctx.parts = payload.transcript.parts || [];
+    ctx.highlights = payload.highlights;
+    ctx.cueById = new Map();
+    ctx.cueByIndex = new Map();
+    for (const item of payload.transcript.cues) {
+      ctx.cueById.set(item.id, item);
+      ctx.cueByIndex.set(item.index, item);
+    }
+    ctx.paintedCues = new Set();
+
+    renderTranscript(ctx);
+    applyHighlights(ctx);
+    renderList(ctx);
+
+    const index = keepEditingCue
+      ? ctx.chunks.findIndex((chunk) => chunk.cue_ids.includes(keepEditingCue))
+      : ctx.cursorIndex;
+    setCursor(ctx, Math.max(0, index), { scroll: true });
+    if (keepEditingCue && index >= 0) enterEdit(ctx, index);
+  };
+
   renderTranscript(ctx);
   applyHighlights(ctx);
   initPlayer(ctx);

@@ -2,7 +2,13 @@
 
 import pytest
 
-from subtitle_search.editing import EditError, apply_cue_edit, backup_path, remap_offset
+from subtitle_search.editing import (
+    EditError,
+    apply_cue_edit,
+    apply_speaker_edit,
+    backup_path,
+    remap_offset,
+)
 from subtitle_search.session import open_recording
 
 from .test_session import write_mp4
@@ -301,3 +307,145 @@ def test_voice_tag_files_keep_their_tags(tmp_path):
 
     saved = (tmp_path / "meeting.vtt").read_text()
     assert "<v Dana Whitfield>Corrected wording here." in saved
+
+
+# -- saying who actually said it ---------------------------------------
+
+ONE_VOICE = """WEBVTT
+
+1
+00:00:01.000 --> 00:00:06.000
+Dana Whitfield: So tell me how you approach it.
+
+2
+00:00:07.000 --> 00:00:13.000
+Dana Whitfield: Honestly I read the whole thing first.
+
+3
+00:00:14.000 --> 00:00:20.000
+Dana Whitfield: And what breaks down in that?
+
+4
+00:00:21.000 --> 00:00:27.000
+Dana Whitfield: Finding where a quote actually is.
+"""
+
+
+@pytest.fixture
+def one_voice(tmp_path):
+    (tmp_path / "meeting.vtt").write_text(ONE_VOICE, encoding="utf-8")
+    write_mp4(tmp_path / "meeting.mp4", 60)
+    return open_recording(tmp_path)
+
+
+def test_a_single_speaker_transcript_is_not_joined(one_voice):
+    """One label on an in-person recording covers a whole room, not one person."""
+    assert one_voice.transcript.speakers == ["Dana Whitfield"]
+    assert len(one_voice.transcript.chunks) == 4
+
+
+def test_reassigning_a_line_writes_it_to_the_transcript(one_voice):
+    apply_speaker_edit(one_voice, "c1", "Rafael Ortiz")
+
+    saved = (one_voice.folder / "meeting.vtt").read_text()
+    assert "Rafael Ortiz: Honestly I read the whole thing first." in saved
+    assert one_voice.transcript.cue("c1").speaker == "Rafael Ortiz"
+
+
+def test_blocks_reform_once_a_second_speaker_exists(one_voice):
+    """Assigning speakers is what makes joining meaningful again."""
+    apply_speaker_edit(one_voice, "c1", "Rafael Ortiz")
+    apply_speaker_edit(one_voice, "c3", "Rafael Ortiz")
+
+    transcript = one_voice.transcript
+    assert transcript.speakers == ["Dana Whitfield", "Rafael Ortiz"]
+    assert [c.cue_ids for c in transcript.chunks] == [["c0"], ["c1"], ["c2"], ["c3"]]
+
+
+def test_a_run_of_lines_can_be_reassigned_at_once(one_voice):
+    """A mis-segmented answer is usually several captions long."""
+    apply_speaker_edit(one_voice, "c1", "Rafael Ortiz", through_cue_id="c3")
+
+    speakers = [one_voice.transcript.cue(f"c{i}").speaker for i in range(4)]
+    assert speakers == ["Dana Whitfield", "Rafael Ortiz", "Rafael Ortiz", "Rafael Ortiz"]
+    # And those three now read as one turn.
+    assert [c.cue_ids for c in one_voice.transcript.chunks] == [["c0"], ["c1", "c2", "c3"]]
+
+
+def test_a_reversed_range_still_works(one_voice):
+    apply_speaker_edit(one_voice, "c3", "Rafael Ortiz", through_cue_id="c1")
+    assert one_voice.transcript.cue("c2").speaker == "Rafael Ortiz"
+
+
+def test_a_one_word_name_survives_reparsing(one_voice):
+    """Detection would never accept it; the roster makes it a decision, not a guess."""
+    apply_speaker_edit(one_voice, "c1", "Interviewer")
+
+    assert "NOTE speakers:" in (one_voice.folder / "meeting.vtt").read_text()
+    assert one_voice.transcript.cue("c1").speaker == "Interviewer"
+
+    # And it holds when the folder is opened fresh.
+    assert open_recording(one_voice.folder).transcript.cue("c1").speaker == "Interviewer"
+
+
+def test_reassigning_backs_up_the_original_first(one_voice):
+    result = apply_speaker_edit(one_voice, "c1", "Rafael Ortiz")
+    assert result["backup_created"] == "meeting_original.vtt"
+    assert backup_path(one_voice.folder / "meeting.vtt").read_text() == ONE_VOICE
+
+
+def test_reassigning_leaves_the_words_alone(one_voice):
+    apply_speaker_edit(one_voice, "c2", "Rafael Ortiz")
+    assert one_voice.transcript.cue("c2").text == "And what breaks down in that?"
+
+
+def test_quotes_stay_anchored_across_a_reassignment(one_voice):
+    quote = one_voice.store.create(
+        {
+            "text": "read the whole thing",
+            "start_cue_id": "c1",
+            "start_char_offset": 11,
+            "end_cue_id": "c1",
+            "end_char_offset": 31,
+        }
+    )
+    apply_speaker_edit(one_voice, "c1", "Rafael Ortiz")
+
+    kept = one_voice.store.list()[0]
+    assert kept["id"] == quote["id"]
+    assert one_voice.transcript.text_between(
+        kept["start_cue_id"], kept["start_char_offset"],
+        kept["end_cue_id"], kept["end_char_offset"],
+    ) == "read the whole thing"
+    assert one_voice.store.stale is False
+
+
+def test_an_empty_speaker_is_rejected(one_voice):
+    with pytest.raises(EditError):
+        apply_speaker_edit(one_voice, "c1", "   ")
+
+
+def test_a_name_with_a_colon_is_rejected(one_voice):
+    """It would be re-read as a label plus text on the next parse."""
+    with pytest.raises(EditError):
+        apply_speaker_edit(one_voice, "c1", "Rafael: Ortiz")
+
+
+def test_an_unknown_line_is_rejected(one_voice):
+    with pytest.raises(EditError):
+        apply_speaker_edit(one_voice, "c99", "Rafael Ortiz")
+
+
+def test_a_line_with_no_label_can_be_given_one(tmp_path):
+    """Zoom leaves trailing captions unattributed; they inherit the wrong person."""
+    (tmp_path / "meeting.vtt").write_text(
+        "WEBVTT\n\n1\n00:00:01.000 --> 00:00:05.000\nDana Whitfield: A labelled line.\n\n"
+        "2\n00:00:06.000 --> 00:00:10.000\nA trailing clause with no label at all.\n",
+        encoding="utf-8",
+    )
+    recording = open_recording(tmp_path)
+    assert recording.transcript.cue("c1").speaker == "Dana Whitfield"  # inherited
+
+    apply_speaker_edit(recording, "c1", "Rafael Ortiz")
+    assert recording.transcript.cue("c1").speaker == "Rafael Ortiz"
+    assert "Rafael Ortiz: A trailing clause" in (tmp_path / "meeting.vtt").read_text()

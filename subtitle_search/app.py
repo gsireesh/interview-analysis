@@ -13,7 +13,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .editing import EditError, apply_cue_edit
+from .editing import EditError, apply_cue_edit, apply_speaker_edit
 from .highlights import COLORS, HighlightError
 from .library import (
     THEMES_FILENAME,
@@ -104,6 +104,23 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             raise HTTPException(
                 status_code=500, detail=f"could not write the transcript: {exc}"
             ) from exc
+
+    @app.patch("/api/recordings/{recording_id}/cues/{cue_id}/speaker")
+    def edit_speaker(recording_id: str, cue_id: str, payload: dict = Body(...)) -> dict:
+        """Reattribute a line, or a run of them, to a different speaker."""
+        recording = require(recording_id)
+        try:
+            result = apply_speaker_edit(
+                recording, cue_id, payload.get("speaker", ""), payload.get("through")
+            )
+        except EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"could not write the transcript: {exc}"
+            ) from exc
+        # Regrouping changes every block, so the reader takes the whole thing back.
+        return {**result, "recording": recording.payload()}
 
     @app.get("/api/recordings/{recording_id}/highlights")
     def list_highlights(recording_id: str) -> dict:

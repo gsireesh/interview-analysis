@@ -49,6 +49,8 @@ export function enterEdit(ctx, chunkIndex) {
     row.innerHTML = `
       <button class="cue-line__play" type="button" title="Play this line" aria-label="Play this line">▶</button>
       <span class="cue-line__time">${formatTime(item.start)}</span>
+      <input class="cue-line__who" list="known-speakers" value="${escapeHtml(item.speaker || "")}"
+             placeholder="who said this" aria-label="Speaker for the line at ${formatTime(item.start)}">
       <div class="cue-line__text" contenteditable="${PLAINTEXT_ONLY ? "plaintext-only" : "true"}"
            spellcheck="true" role="textbox" aria-label="Transcript line at ${formatTime(item.start)}"></div>`;
     row.querySelector(".cue-line__text").textContent = item.text;
@@ -57,8 +59,12 @@ export function enterEdit(ctx, chunkIndex) {
 
   const bar = document.createElement("div");
   bar.className = "edit-bar";
+  // Zoom attributes badly, so who said a line is as editable as what they said.
   bar.innerHTML =
     `<span class="edit-bar__hint">Editing ${chunk.cue_ids.length} line${chunk.cue_ids.length === 1 ? "" : "s"} · Enter saves and moves on · Esc finishes</span>` +
+    `<datalist id="known-speakers">${(ctx.data?.transcript?.speakers || [])
+      .map((name) => `<option value="${escapeHtml(name)}"></option>`)
+      .join("")}</datalist>` +
     `<button class="edit-bar__done" type="button">Done</button>`;
 
   body.dataset.reading = "";
@@ -104,6 +110,11 @@ function bindLines(ctx, container) {
   container.addEventListener("focusout", (event) => {
     const field = event.target.closest(".cue-line__text");
     if (field) commit(ctx, field);
+  });
+
+  container.addEventListener("change", (event) => {
+    const who = event.target.closest(".cue-line__who");
+    if (who) reattribute(ctx, who);
   });
 
   if (!PLAINTEXT_ONLY) {
@@ -184,6 +195,38 @@ async function commit(ctx, field) {
     row.classList.add("cue-line--failed");
     field.textContent = item.text;
     ctx.notify(`Could not save that line: ${error.message}`, { kind: "warn", key: null });
+  }
+}
+
+/** Say who actually said this line, and let the blocks reform around it. */
+async function reattribute(ctx, field) {
+  const row = field.closest(".cue-line");
+  const cueId = row?.dataset.cueId;
+  const item = ctx.cueById.get(cueId);
+  if (!item) return;
+
+  const speaker = field.value.replace(/\s+/g, " ").trim();
+  if (!speaker || speaker === (item.speaker || "")) {
+    field.value = item.speaker || "";
+    return;
+  }
+
+  row.classList.add("cue-line--saving");
+  try {
+    const result = await api(`/api/recordings/${ctx.recordingId}/cues/${cueId}/speaker`, {
+      method: "PATCH",
+      body: { speaker },
+    });
+    if (result.backup_created) {
+      ctx.notify(`Original transcript saved as ${result.backup_created}.`);
+    }
+    // Reattributing regroups the whole transcript, so the reader takes it back
+    // wholesale rather than trying to patch blocks in place.
+    ctx.onTranscriptChanged?.(result.recording, { keepEditingCue: cueId });
+  } catch (error) {
+    row.classList.remove("cue-line--saving");
+    field.value = item.speaker || "";
+    ctx.notify(`Could not reassign that line: ${error.message}`, { kind: "warn", key: null });
   }
 }
 

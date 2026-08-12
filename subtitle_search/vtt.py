@@ -39,6 +39,38 @@ _VOICE_RE = re.compile(
 _COLON_RE = re.compile(r"^(?P<name>[^:\n]{1,100}):(?P<sep>[ \t]+)(?P<text>\S.*)$", re.S)
 _CUE_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
 
+#: Speakers assigned by hand, recorded in the transcript itself as a WebVTT
+#: NOTE. Detection is a guess and has to stay conservative; an assignment is a
+#: decision and must survive re-parsing whatever it looks like. Keeping it in
+#: the file rather than a sidecar means one source of truth, readable by
+#: anything that opens the transcript, and ignored by anything that plays it.
+_ROSTER_RE = re.compile(r"^NOTE\s+speakers:\s*(.+)$", re.IGNORECASE)
+
+
+def read_roster(content: str) -> list[str]:
+    """Speaker names that were assigned by hand, and must always be honoured."""
+    for raw in content.split("\n"):
+        match = _ROSTER_RE.match(raw.strip())
+        if match:
+            return [name.strip() for name in match.group(1).split(",") if name.strip()]
+    return []
+
+
+def write_roster(content: str, names: list[str]) -> str:
+    """Put the roster back, replacing any previous one, just under the header."""
+    line = f"NOTE speakers: {', '.join(names)}"
+    lines = content.split("\n")
+    for index, raw in enumerate(lines):
+        if _ROSTER_RE.match(raw.strip()):
+            lines[index] = line
+            return "\n".join(lines)
+
+    # No roster yet: sit it after the WEBVTT header and its blank line.
+    for index, raw in enumerate(lines):
+        if raw.strip().upper().startswith("WEBVTT"):
+            return "\n".join(lines[: index + 1] + ["", line] + lines[index + 1 :])
+    return "\n".join([line, ""] + lines)
+
 #: Leading characters to look past when asking whether a word is capitalized.
 _WORD_LEAD = "(\"'[{"
 
@@ -191,7 +223,7 @@ def is_plausible_speaker_prefix(prefix: str) -> bool:
     return True
 
 
-def _accept_speakers(counts: dict[str, int]) -> set[str]:
+def _accept_speakers(counts: dict[str, int], roster: set[str] | None = None) -> set[str]:
     """Decide which candidate prefixes are real speakers, given the whole file.
 
     A prefix qualifies if it is plausibly name-shaped *and* either reads as a
@@ -199,8 +231,14 @@ def _accept_speakers(counts: dict[str, int]) -> set[str]:
     a clean two-word name is what keeps a stray mid-sentence colon from inventing
     a speaker: an accidental prefix would have to appear verbatim twice.
     """
+    roster = roster or set()
     accepted = set()
     for prefix, count in counts.items():
+        # An assigned name is not a guess, so the heuristics do not get a vote:
+        # "Interviewer" on a single line would otherwise fail every test below.
+        if prefix in roster:
+            accepted.add(prefix)
+            continue
         if not is_plausible_speaker_prefix(prefix):
             continue
         if count >= 2 or (
@@ -218,7 +256,9 @@ class _Resolved:
     suffix: str
 
 
-def _extract_payload_speakers(payloads: list[str]) -> tuple[list[_Resolved], str]:
+def _extract_payload_speakers(
+    payloads: list[str], roster: set[str] | None = None
+) -> tuple[list[_Resolved], str]:
     """Resolve each payload into speaker, readable text, and what was stripped."""
     # Voice tags are unambiguous -- if the file uses them, trust them exclusively
     # and never run the colon heuristic.
@@ -246,7 +286,7 @@ def _extract_payload_speakers(payloads: list[str]) -> tuple[list[_Resolved], str
             name = hit.group("name").strip()
             counts[name] = counts.get(name, 0) + 1
 
-    accepted = _accept_speakers(counts)
+    accepted = _accept_speakers(counts, roster)
     if not accepted:
         return [_Resolved(None, _clean(p), "", "") for p in payloads], "none"
 
@@ -299,7 +339,7 @@ def parse_cues(content: str) -> tuple[list[Cue], str]:
     if not timings:
         raise VTTParseError("no cues found; is this a WebVTT file?")
 
-    resolved, method = _extract_payload_speakers(payloads)
+    resolved, method = _extract_payload_speakers(payloads, set(read_roster(content)))
 
     cues: list[Cue] = []
     current_speaker: str | None = None
@@ -325,12 +365,20 @@ def parse_cues(content: str) -> tuple[list[Cue], str]:
     return cues, method
 
 
-def build_chunks(cues: list[Cue], has_speakers: bool) -> list[Chunk]:
+def build_chunks(cues: list[Cue], speaker_count: int) -> list[Chunk]:
     """Group cues into display blocks.
 
-    With speakers, a chunk is exactly one contiguous run from one speaker, as
-    requested -- long turns stay whole and get paragraph breaks instead. Without
-    speakers there is nothing to group on, so chunks break on long pauses.
+    With two or more speakers a chunk is one contiguous run from one of them:
+    long turns stay whole and get paragraph breaks instead.
+
+    Exactly one speaker means the label carries no information, and usually
+    means the room was recorded through a single microphone -- everybody present
+    is filed under whoever started the meeting. Joining on that label would
+    invent a monologue out of a conversation, so every caption stands alone
+    until speakers are actually assigned. From two speakers on, joining resumes.
+
+    No speaker at all is a different situation -- a transcript that never had
+    labels -- so those still break on long pauses, which at least reads.
     """
     chunks: list[Chunk] = []
     run: list[Cue] = []
@@ -364,7 +412,9 @@ def build_chunks(cues: list[Cue], has_speakers: bool) -> list[Chunk]:
             # the same speaker -- the interruption is real and worth seeing.
             if cue.part_index != run[-1].part_index:
                 boundary = True
-            elif has_speakers:
+            elif speaker_count == 1:
+                boundary = True
+            elif speaker_count >= 2:
                 boundary = cue.speaker != run[-1].speaker
             else:
                 boundary = cue.start - run[-1].end > FALLBACK_CHUNK_GAP
@@ -389,7 +439,7 @@ def parse_vtt(content: str, source_name: str = "transcript.vtt") -> Transcript:
     for cue in cues:
         if cue.speaker and cue.speaker not in speakers:
             speakers.append(cue.speaker)
-    chunks = build_chunks(cues, has_speakers=bool(speakers))
+    chunks = build_chunks(cues, speaker_count=len(speakers))
     digest = hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
     return Transcript(
         cues=cues,
@@ -421,7 +471,7 @@ def assemble_session(specs: list[dict], parts: list[Part], source_name: str) -> 
         if cue.speaker and cue.speaker not in speakers:
             speakers.append(cue.speaker)
 
-    chunks = build_chunks(combined, has_speakers=bool(speakers))
+    chunks = build_chunks(combined, speaker_count=len(speakers))
     digest = session_digest([spec["sha256"] for spec in specs])
     methods = {spec["method"] for spec in specs}
     method = methods.pop() if len(methods) == 1 else "mixed"
@@ -448,10 +498,27 @@ def session_digest(part_digests: list[str]) -> str:
     return hashlib.sha256(" ".join(part_digests).encode("utf-8")).hexdigest()
 
 
+def splice_payload(content: str, cue: Cue, prefix: str, text: str, suffix: str) -> str:
+    """Rewrite one cue's payload, leaving every other byte as it was."""
+    return content[: cue.source_start] + f"{prefix}{text}{suffix}" + content[cue.source_end :]
+
+
 def splice_cue(content: str, cue: Cue, new_text: str) -> str:
-    """Replace one cue's payload in the source, leaving the rest byte-identical."""
-    replacement = f"{cue.prefix}{new_text}{cue.suffix}"
-    return content[: cue.source_start] + replacement + content[cue.source_end :]
+    """Replace one cue's words, keeping whoever it was attributed to."""
+    return splice_payload(content, cue, cue.prefix, new_text, cue.suffix)
+
+
+def speaker_prefix(speaker: str, style: str) -> tuple[str, str]:
+    """How this file writes a speaker, so an edit matches what is already there."""
+    if style == "voice-tag":
+        return f"<v {speaker}>", ""
+    return f"{speaker}: ", ""
+
+
+def splice_speaker(content: str, cue: Cue, speaker: str, style: str) -> str:
+    """Reattribute one cue, adding a label to a line that never had one."""
+    prefix, suffix = speaker_prefix(speaker, style)
+    return splice_payload(content, cue, prefix, cue.text, suffix)
 
 
 def load_vtt(path: Path) -> Transcript:

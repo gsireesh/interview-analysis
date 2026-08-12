@@ -98,7 +98,9 @@ CRLF_NO_NUMBERS = (
     "Rafael Ortiz: Second line of the transcript.\r\n"
 )
 
-# A single speaker talking through a long pause, to exercise paragraph splitting.
+# One long turn broken by a pause, with a second speaker after it so that
+# joining applies at all -- a transcript with a single speaker is deliberately
+# never joined, since that label carries no information.
 LONG_TURN_WITH_PAUSE = """WEBVTT
 
 1
@@ -112,6 +114,10 @@ Dana Whitfield: The project started about a year ago.
 3
 00:00:16.000 --> 00:00:20.000
 Dana Whitfield: Anyway, that is the context you need.
+
+4
+00:00:21.000 --> 00:00:24.000
+Rafael Ortiz: Understood, thanks.
 """
 
 # Payload wrapped across two lines within one cue.

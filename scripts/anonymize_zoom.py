@@ -92,6 +92,13 @@ _PARENTHETICAL_RE = re.compile(r"\(([^)]*)\)")
 _NON_NAME_RE = re.compile(r"[^\w\s'-]", re.UNICODE)
 
 
+#: What a lone speaker becomes. An in-person session recorded through one
+#: microphone files the whole room under whoever started the meeting, so the
+#: label names nobody in particular -- calling it the participant would be a
+#: claim the transcript does not support.
+UNKNOWN_LABEL = "unknown"
+
+
 def interviewer_label(number: int) -> str:
     return f"interviewer {number}"
 
@@ -339,6 +346,15 @@ def build_mapping(
         raise FolderProblem(
             "every speaker was named as an interviewer, so there is no participant"
         )
+
+    # One speaker and nothing said about who they are: the label is doing no
+    # work, so it is replaced outright rather than promoted to the participant.
+    if len(order) == 1 and not explicit_keys:
+        mapping = Mapping()
+        mapping.targets[order[0]] = UNKNOWN_LABEL
+        mapping.names[order[0]] = grouped.get(order[0], set())
+        mapping.build()
+        return mapping
     # Position 2 onwards by default; falls back to the only speaker there is.
     participant_key = next((k for k in unnamed if order.index(k) >= 1), unnamed[0])
 

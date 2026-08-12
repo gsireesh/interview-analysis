@@ -238,6 +238,19 @@ class Recording:
     #: into it without re-reading and without reformatting the rest.
     sources: list[str]
 
+    def reload_transcript(self) -> None:
+        """Re-derive the session after its transcript changed on disk.
+
+        Reassigning a speaker changes how cues group, so chunks have to be
+        rebuilt rather than patched. Cue ids are positional and the edit does not
+        add or remove cues, so saved quotes stay anchored across the rebuild.
+        """
+        transcript, sources = build_transcript(self.folder, self.part_files)
+        self.transcript = transcript
+        self.sources = sources
+        self.store.transcript = transcript
+        self.store.restamp()
+
     def restamp_part(self, part_index: int, content: str) -> None:
         """Refresh digests after a part's transcript was corrected on disk."""
         part = self.transcript.part(part_index)

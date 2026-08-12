@@ -597,3 +597,46 @@ def test_a_label_the_detector_rejects_is_still_surfaced(tmp_path, source_root, o
     output = capsys.readouterr().out
     assert "REVIEW" in output
     assert "Quentin" in output
+
+
+# -- one speaker, nobody identifiable ----------------------------------
+
+
+def test_a_lone_speaker_becomes_unknown(tmp_path, source_root, out):
+    """An in-person recording files the whole room under one name, so that name
+    identifies nobody and must not become the participant."""
+    make_folder(
+        tmp_path,
+        VTT_HEAD
+        + cue(1, "Sireesh Gururaja", "So tell me about your process.")
+        + cue(2, "Sireesh Gururaja", "Honestly I read the whole thing first.")
+        + cue(3, "Sireesh Gururaja", "And what breaks down?"),
+        "P70",
+    )
+
+    assert run(source_root, out) == 0
+    text = read(out, "P70")
+    assert text.count("unknown:") == 3
+    assert "Sireesh" not in text and "Gururaja" not in text
+    # Not attributed to the participant, because nothing says it was them.
+    assert "P70:" not in text
+
+
+def test_naming_the_lone_speaker_still_works(tmp_path, source_root, out):
+    """Saying who it is overrides the unknown fallback."""
+    make_folder(
+        tmp_path,
+        VTT_HEAD + cue(1, "Ada Lovelace", "One.") + cue(2, "Ada Lovelace", "Two."),
+        "P71",
+    )
+
+    assert run(source_root, out, "--interviewer", "Ada Lovelace") == 1
+    # Every speaker named as an interviewer leaves no participant, and is refused.
+    assert not (out / "P71").exists()
+
+
+def test_two_speakers_are_unaffected_by_the_unknown_rule(folder, source_root, out):
+    run(source_root, out)
+    text = read(out, "P07", "GMT20240301-140000_Recording.transcript.vtt")
+    assert "unknown" not in text
+    assert "interviewer 1:" in text and "P07:" in text

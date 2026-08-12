@@ -168,7 +168,33 @@ overlapping it, so a quote keeps covering the same words rather than drifting by
 however many characters you inserted. The quote's saved text is refreshed too, so
 it reflects the correction instead of preserving the error.
 
-Timestamps and speaker labels are not editable — only the words.
+Timestamps are not editable, but **who said a line is**. Zoom segments badly: a
+trailing clause routinely lands under whoever spoke before it. In edit mode each
+line carries a speaker field alongside its words, so the fix is to say who
+actually said it.
+
+The name is written into the transcript as a normal label *and* into a
+`NOTE speakers:` roster at the top of the file. Detection has to stay
+conservative — it would never accept a one-word name on a single line — but an
+assignment is a decision, not a guess, so the roster makes it survive re-parsing.
+It is standard WebVTT, ignored by anything that plays the file.
+
+## Recordings made in a room
+
+An in-person session recorded through one laptop comes back with the whole room
+filed under whoever started the meeting. One speaker label carrying several
+people is worse than none, so:
+
+- **a transcript with exactly one speaker is never joined** — every caption
+  stands alone, because joining on that label would invent a monologue out of a
+  conversation
+- **joining resumes the moment a second speaker exists**, so blocks reform as you
+  assign them
+- **the anonymizer labels a lone speaker `unknown`** rather than the participant
+  ID, since the label identifies nobody in particular
+
+A transcript with *no* speaker labels at all is a different situation and still
+breaks on long pauses, which at least reads.
 
 ## Quotes
 

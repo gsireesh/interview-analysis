@@ -1813,3 +1813,29 @@ mark.hl--noted::after {
 
 .rate__select:hover { border-color: var(--ink-faint); }
 .rate__select:focus-visible { border-color: var(--marker); }
+
+/* Who said a line, editable alongside what they said. Zoom attributes badly:
+   a trailing clause lands under whoever spoke before it, and an in-person
+   recording files the whole room under one name. */
+.cue-line {
+  grid-template-columns: 1.25rem 3rem 8rem minmax(0, 1fr);
+}
+
+.cue-line__who {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 0.2rem 0.3rem;
+  min-width: 0;
+}
+
+.cue-line__who:focus { border-color: var(--marker); outline: none; color: var(--ink); }
+.cue-line__who::placeholder { color: var(--ink-faint); font-style: italic; }
+
+@media (max-width: 60rem) {
+  .cue-line { grid-template-columns: 1.25rem 3rem minmax(0, 1fr); }
+  .cue-line__who { grid-column: 1 / -1; }
+}
