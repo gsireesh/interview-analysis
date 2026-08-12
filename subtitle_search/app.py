@@ -13,7 +13,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .editing import EditError, apply_cue_edit, apply_speaker_edit
+from .editing import EditError, apply_cue_edit, apply_roster_edit, apply_speaker_edit
 from .highlights import COLORS, HighlightError
 from .library import (
     THEMES_FILENAME,
@@ -104,6 +104,21 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             raise HTTPException(
                 status_code=500, detail=f"could not write the transcript: {exc}"
             ) from exc
+
+    @app.put("/api/recordings/{recording_id}/roster")
+    def edit_roster(recording_id: str, payload: dict = Body(...)) -> dict:
+        """Set the speakers and their keys, without opening the transcript."""
+        recording = require(recording_id)
+        try:
+            result = apply_roster_edit(recording, payload.get("speakers") or [])
+        except EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"could not write the transcript: {exc}"
+            ) from exc
+        # Rostering changes what joins, so the reader takes the whole thing back.
+        return {**result, "recording": recording.payload()}
 
     @app.patch("/api/recordings/{recording_id}/cues/{cue_id}/speaker")
     def edit_speaker(recording_id: str, cue_id: str, payload: dict = Body(...)) -> dict:

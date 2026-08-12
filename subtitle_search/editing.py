@@ -117,6 +117,54 @@ def normalize_edit(text: str) -> str:
     return _WHITESPACE_RE.sub(" ", text or "").strip()
 
 
+#: Keys the reader already uses. A speaker cannot take one, or naming somebody
+#: would quietly break navigation.
+RESERVED_KEYS = set("jkechfs/[]")
+
+
+def apply_roster_edit(recording, entries: list[dict]) -> dict:
+    """Rewrite the roster of speakers and their keys.
+
+    The roster lives in the transcript, but nobody should have to open the
+    transcript to change it. Every part of a session gets the same roster, since
+    the speakers are the same people either side of an interruption.
+    """
+    cleaned: list[dict] = []
+    seen_names: set[str] = set()
+    seen_keys: set[str] = set()
+
+    for entry in entries:
+        name = normalize_edit(str(entry.get("name") or ""))
+        if not name:
+            continue
+        if ":" in name:
+            raise EditError("a speaker's name cannot contain a colon")
+        if name.lower() in seen_names:
+            raise EditError(f"{name} is listed twice")
+        seen_names.add(name.lower())
+
+        key = str(entry.get("key") or "").strip()
+        if key:
+            if len(key) != 1:
+                raise EditError(f"a key is a single character, not {key!r}")
+            if key in RESERVED_KEYS:
+                raise EditError(f"{key} is already a reader shortcut; pick another")
+            if key in seen_keys:
+                raise EditError(f"two speakers cannot share the key {key}")
+            seen_keys.add(key)
+        cleaned.append({"key": key or None, "name": name})
+
+    for index, files in enumerate(recording.part_files):
+        content = recording.sources[index]
+        ensure_backup(files.vtt_path)
+        content = write_roster(content, cleaned)
+        write_atomically(files.vtt_path, content)
+        recording.sources[index] = content
+
+    recording.reload_transcript()
+    return {"roster": recording.transcript.roster}
+
+
 def apply_speaker_edit(
     recording, cue_id: str, speaker: str, through_cue_id: str | None = None
 ) -> dict:

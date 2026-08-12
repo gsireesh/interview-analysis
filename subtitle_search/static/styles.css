@@ -1896,3 +1896,34 @@ mark.hl--noted::after {
 }
 
 .chunk--split.chunk--cursor .chunk__body { border-left-color: var(--marker); }
+
+.roster__who { display: inline-flex; align-items: center; }
+.roster__hit {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font: inherit; font-size: 0.6875rem; color: var(--ink);
+  background: var(--paper-raised); border: 1px solid var(--rule);
+  border-right: 0; border-radius: 999px 0 0 999px;
+  padding: 0.1rem 0.4rem 0.1rem 0.25rem; cursor: pointer;
+}
+.roster__hit:hover { border-color: var(--marker); }
+.roster__edit {
+  font: inherit; font-size: 0.5625rem; color: var(--ink-faint);
+  background: var(--paper-raised); border: 1px solid var(--rule); border-left: 0;
+  padding: 0.2rem 0.35rem; cursor: pointer;
+}
+.roster__who .roster__edit:last-child { border-radius: 0 999px 999px 0; }
+.roster__edit:hover { color: var(--ink); }
+.roster__empty { font-size: 0.6875rem; color: var(--ink-faint); font-style: italic; }
+.roster__suggest {
+  font: inherit; font-size: 0.625rem; color: var(--ink-soft);
+  background: none; border: 1px dashed var(--rule); border-radius: 999px;
+  padding: 0.1rem 0.5rem; cursor: pointer;
+}
+.roster__suggest:hover { border-color: var(--marker); color: var(--marker); }
+.roster__field {
+  font: inherit; font-size: 0.6875rem; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--rule);
+  border-radius: 2px; padding: 0.15rem 0.35rem;
+}
+.roster__field--key { width: 2.5rem; font-family: var(--mono); text-align: center; }
+.roster__field:focus { border-color: var(--marker); outline: none; }

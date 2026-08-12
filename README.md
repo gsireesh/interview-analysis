@@ -200,13 +200,15 @@ breaks on long pauses, which at least reads.
 
 ### Labelling with the keyboard
 
-Name the speakers at the top of the transcript and each one gets a key:
+Name the speakers in the strip under the header — **+ Speaker** — and each one
+gets a key. Rename with ✎, remove with ✕. Nothing here needs the transcript
+opened; the roster is stored in it as a standard `NOTE speakers:` line, but that
+is a storage detail rather than somewhere to type.
 
-```
-WEBVTT
-
-NOTE speakers: 1=Interviewer, 2=Participant
-```
+Where a transcript already names several speakers, they are offered as one-click
+adds so they only need keys. Where it names exactly one, they are not: that label
+is the room rather than a person, and rostering it would let its lines join and
+defeat labelling them apart.
 
 Digits by default — nothing else in the reader uses them, and `1`–`5` fall under
 the hand that is not on the trackpad. Any single character works if you would

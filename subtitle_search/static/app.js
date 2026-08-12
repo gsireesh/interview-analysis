@@ -85,6 +85,7 @@ const ctx = {
   paintedCues: new Set(),
   activeHighlightId: null,
   tagFilter: null,
+  rosterEditing: null,
   pendingSelection: null,
   scrubbing: false,
 };
@@ -197,25 +198,127 @@ async function load() {
    * would mean reimplementing the chunker in the browser. Re-rendering and
    * returning to the line being worked on is both simpler and always right.
    */
-  /** The speaker keys, shown so the bindings are never a thing you remember. */
+  /**
+   * The speaker keys: what they are, and where they are changed.
+   *
+   * This lives here rather than in the transcript because nobody should have to
+   * open a .vtt to name the people in it. It doubles as a reminder of which key
+   * is whom while reading, which is why it stays on screen.
+   */
   ctx.renderRoster = () => {
-    const roster = (ctx.data?.transcript?.roster || []).filter((entry) => entry.key);
-    ctx.el.roster.hidden = !roster.length;
-    if (!roster.length) return;
+    const roster = ctx.data?.transcript?.roster || [];
+    // Offering the labels already in the file is right when there are several
+    // of them -- they are the real speakers and just need keys. It is wrong when
+    // there is one, because that label is the room rather than a person, and
+    // rostering it would let its lines join and defeat labelling them apart.
+    const found = ctx.data?.transcript?.speakers || [];
+    const detected =
+      found.length > 1 ? found.filter((name) => !roster.some((e) => e.name === name)) : [];
+    ctx.el.roster.hidden = false;
+
+    if (ctx.rosterEditing != null) {
+      const entry = ctx.rosterEditing === "new" ? { key: "", name: "" } : roster[ctx.rosterEditing];
+      ctx.el.roster.innerHTML =
+        `<span class="roster__lead">${ctx.rosterEditing === "new" ? "new speaker" : "rename"}</span>` +
+        `<input class="roster__field roster__field--key" id="roster-key" maxlength="1"
+                value="${escapeAttr(entry.key || "")}" placeholder="key" aria-label="Key">` +
+        `<input class="roster__field" id="roster-name" value="${escapeAttr(entry.name || "")}"
+                placeholder="name" aria-label="Speaker name">` +
+        `<button class="btn" id="roster-save" type="button">Save</button>` +
+        `<button class="btn" id="roster-cancel" type="button">Cancel</button>`;
+      const name = $("roster-name");
+      name.focus();
+      name.select();
+      return;
+    }
+
     ctx.el.roster.innerHTML =
       `<span class="roster__lead">assign this block</span>` +
-      roster
+      (roster.length
+        ? roster
+            .map(
+              (entry, index) =>
+                `<span class="roster__who">
+                   <button class="roster__hit" data-assign="${escapeAttr(entry.name)}"
+                           title="Assign this block to ${escapeAttr(entry.name)}">
+                     <kbd>${escapeAttr(entry.key || "·")}</kbd>${escapeAttr(entry.name)}</button>
+                   <button class="roster__edit" data-edit="${index}" aria-label="Rename ${escapeAttr(entry.name)}">✎</button>
+                   <button class="roster__edit" data-drop="${index}" aria-label="Remove ${escapeAttr(entry.name)}">✕</button>
+                 </span>`
+            )
+            .join("")
+        : `<span class="roster__empty">${found.length > 1
+            ? "nobody named yet — add the speakers to label with a keypress"
+            : "one label covers everyone here — add who was actually in the room"}</span>`) +
+      `<button class="btn" data-add="1" type="button">+ Speaker</button>` +
+      detected
         .map(
-          (entry) =>
-            `<button class="roster__who" type="button" data-speaker="${entry.name.replace(/"/g, "&quot;")}">
-               <kbd>${entry.key}</kbd>${entry.name.replace(/</g, "&lt;")}</button>`
+          (name) =>
+            `<button class="roster__suggest" data-quick="${escapeAttr(name)}"
+                     title="Add ${escapeAttr(name)} to the roster">+ ${escapeAttr(name)}</button>`
         )
         .join("");
   };
 
+  const escapeAttr = (value) => String(value).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  /** Send the whole roster back; the server is the one that validates it. */
+  ctx.saveRoster = async (entries) => {
+    try {
+      const result = await api(`/api/recordings/${ctx.recordingId}/roster`, {
+        method: "PUT",
+        body: { speakers: entries },
+      });
+      ctx.rosterEditing = null;
+      ctx.onTranscriptChanged(result.recording);
+    } catch (error) {
+      ctx.notify(`Could not save the speakers: ${error.message}`, { kind: "warn", key: null });
+    }
+  };
+
   ctx.el.roster.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-speaker]");
-    if (button) assignSpeaker(ctx, button.dataset.speaker);
+    const roster = [...(ctx.data?.transcript?.roster || [])];
+    const target = event.target.closest("[data-assign],[data-edit],[data-drop],[data-add],[data-quick]");
+    if (!target) return;
+
+    if (target.dataset.assign) return assignSpeaker(ctx, target.dataset.assign);
+    if (target.dataset.quick) {
+      return ctx.saveRoster([...roster, { key: null, name: target.dataset.quick }]);
+    }
+    if (target.dataset.drop) {
+      roster.splice(Number(target.dataset.drop), 1);
+      return ctx.saveRoster(roster);
+    }
+    if (target.dataset.edit != null) {
+      ctx.rosterEditing = Number(target.dataset.edit);
+      return ctx.renderRoster();
+    }
+    if (target.dataset.add) {
+      ctx.rosterEditing = "new";
+      return ctx.renderRoster();
+    }
+  });
+
+  ctx.el.roster.addEventListener("keydown", (event) => {
+    if (!event.target.closest(".roster__field")) return;
+    event.stopPropagation();  // digits here name a speaker, they do not assign one
+    if (event.key === "Enter") $("roster-save")?.click();
+    if (event.key === "Escape") $("roster-cancel")?.click();
+  });
+
+  ctx.el.roster.addEventListener("click", (event) => {
+    if (event.target.id === "roster-cancel") {
+      ctx.rosterEditing = null;
+      ctx.renderRoster();
+    }
+    if (event.target.id === "roster-save") {
+      const roster = [...(ctx.data?.transcript?.roster || [])];
+      const entry = { key: $("roster-key").value.trim() || null, name: $("roster-name").value };
+      if (ctx.rosterEditing === "new") roster.push(entry);
+      else roster[ctx.rosterEditing] = entry;
+      ctx.saveRoster(roster.filter((e) => e.name.trim()));
+    }
   });
 
   ctx.onTranscriptChanged = (payload, { keepEditingCue } = {}) => {
