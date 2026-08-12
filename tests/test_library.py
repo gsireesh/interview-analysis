@@ -204,13 +204,16 @@ def test_library_page_is_served_for_many_recordings(client):
     assert "id=\"transcript\"" in api.get("/reader").text
 
 
-def test_reader_is_served_when_there_is_only_one_recording(tmp_path):
+def test_the_home_page_is_the_library_even_for_one_recording(tmp_path):
+    """One entry point beats a home page that changes shape with the folder count."""
     root = tmp_path / "study"
     folder = make_recording(root, "P01", [])
     registry = RecordingRegistry()
     registry.add_library(folder)
 
-    assert 'id="transcript"' in TestClient(create_app(registry)).get("/").text
+    home = TestClient(create_app(registry)).get("/").text
+    assert "<title>Library</title>" in home
+    assert 'id="transcript"' not in home
 
 
 # -- themes ------------------------------------------------------------

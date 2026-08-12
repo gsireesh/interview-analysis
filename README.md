@@ -199,8 +199,12 @@ single reader:
 
 ```bash
 subtitle-search ~/study/            # a folder of participant folders
-subtitle-search ~/study/P01/        # one recording, straight into the reader
+subtitle-search ~/study/P01/        # a single recording
 ```
+
+Either way the home page is the library, and a recording opens from there. One
+entry point beats a home page that changes shape depending on how many folders it
+found.
 
 There is nothing to configure: a folder holding a transcript *is* a recording, so
 a folder that holds none is read as a library of the folders beneath it (two

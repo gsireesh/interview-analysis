@@ -131,7 +131,8 @@ async function load() {
   ctx.recordingId =
     (asked && config.recordings.some((r) => r.id === asked) && asked) ||
     config.default_recording_id;
-  ctx.el.libraryLink.hidden = config.recordings.length < 2;
+  // The library is always the way back, however few recordings it holds.
+  ctx.el.libraryLink.hidden = false;
   if (!ctx.recordingId) {
     ctx.el.chunks.innerHTML = '<p class="empty">No recording loaded.</p>';
     return;

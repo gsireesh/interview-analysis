@@ -205,10 +205,9 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
 
     @app.get("/")
     def index() -> FileResponse:
-        # A single recording opens straight into the reader; there is no library
-        # worth showing for one folder.
-        page = "library.html" if registry.is_library else "index.html"
-        return FileResponse(STATIC_DIR / page)
+        # Always the library, whatever it holds. One entry point beats a home
+        # page that changes shape depending on how many folders it found.
+        return FileResponse(STATIC_DIR / "library.html")
 
     @app.get("/reader")
     def reader() -> FileResponse:
