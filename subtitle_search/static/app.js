@@ -24,6 +24,7 @@ import { cue, initPlayer, nudge, seekAndPlay, stepRate, togglePlay } from "./pla
 import { initSearch } from "./search.js";
 import { copySelection, hideQuoteBar, initHighlights, renderList, save } from "./highlights.js";
 import { enterEdit, exitEdit, isEditing } from "./editing.js";
+import { notify } from "./chrome.js";
 
 const ctx = {
   el: {
@@ -92,18 +93,7 @@ const ctx = {
 
 /* ---------------------------------------------------------------- notices -- */
 
-ctx.notify = (message, { kind = "info", key = null } = {}) => {
-  const notice = document.createElement("div");
-  notice.className = `notice${kind === "warn" ? " notice--warn" : ""}`;
-  notice.innerHTML = `<span class="notice__label">${kind === "warn" ? "Check" : "Note"}</span><span></span><button type="button" aria-label="Dismiss">✕</button>`;
-  notice.querySelector("span:nth-child(2)").textContent = message;
-  notice.querySelector("button").addEventListener("click", () => {
-    notice.remove();
-    if (key) localStorage.setItem(key, "dismissed");
-  });
-  ctx.el.notices.appendChild(notice);
-  if (!key) setTimeout(() => notice.remove(), 4000);
-};
+ctx.notify = (message, options) => notify(ctx.el.notices, message, options);
 
 /* ------------------------------------------------------------------ tabs -- */
 
@@ -389,8 +379,6 @@ function showDiagnostics(data, diagnostics) {
   // Speaker detection is a heuristic, so say what it decided rather than letting
   // a misparse be discovered an hour into a reading session.
   const key = `subtitle-search:parsed:${data.transcript.sha256}`;
-  if (localStorage.getItem(key) === "dismissed") return;
-
   const speakers = diagnostics.speakers;
   const parts = diagnostics.part_count > 1
     ? `${diagnostics.part_count} recordings joined into one timeline. `

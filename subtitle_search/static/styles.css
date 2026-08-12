@@ -242,42 +242,80 @@ body {
 
 .btn[aria-pressed="true"] .count { color: inherit; }
 
-/* --------------------------------------------------------------- notices -- */
+/* ----------------------------------------------------------------- toasts -- */
 
-.notices { flex: 0 0 auto; }
-
-.notice {
+/* Messages used to be a full-width bar above the transcript that pushed the
+   text down and stayed there. A reading tool should not rearrange what you are
+   reading to say a file was saved, so they sit in the corner instead -- clear of
+   the transport bar in the reader, which is always there. */
+.notices {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 60;
   display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: min(24rem, calc(100vw - 2.5rem));
+  pointer-events: none;
+}
+
+body:not(.page) .notices { bottom: 4.75rem; }
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.625rem 0.75rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+}
+
+/* The stripe is the severity: legible before the words are read, and without
+   colouring the text itself. */
+.toast__mark {
+  flex: 0 0 auto;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+  background: var(--ink-faint);
+}
+
+.toast--warn .toast__mark { background: var(--dot-rose); }
+.toast--info .toast__mark { background: var(--marker); }
+
+.toast__text {
+  flex: 1;
   font-size: 0.75rem;
-  border-bottom: 1px solid var(--rule);
-  background: var(--paper-sunk);
-  color: var(--ink-soft);
+  line-height: 1.5;
+  color: var(--ink);
 }
 
-.notice--warn { background: var(--hl-amber); color: var(--ink); }
-
-.notice__label {
-  font-family: var(--mono);
-  font-size: 0.6875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ink-faint);
-}
-
-.notice button {
-  margin-left: auto;
+.toast__close {
+  flex: 0 0 auto;
   background: none;
   border: 0;
-  color: inherit;
+  color: var(--ink-faint);
   cursor: pointer;
   font: inherit;
-  opacity: 0.6;
+  font-size: 0.6875rem;
+  padding: 0 0.15rem;
 }
 
-.notice button:hover { opacity: 1; }
+.toast__close:hover { color: var(--ink); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .toast { animation: toast-in 180ms cubic-bezier(0.22, 1, 0.36, 1); }
+  .toast--going { opacity: 0; transform: translateY(4px); transition: opacity 160ms, transform 160ms; }
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
 
 /* ------------------------------------------------------------- workspace -- */
 
