@@ -5,11 +5,44 @@ recording is a reference you drop into when you need to hear how something was
 said. Point it at a recording folder, read, pull quotes.
 
 ```bash
+uv sync                                  # exact versions from uv.lock
+uv run subtitle-search /path/to/folder
+```
+
+Or with pip, if you would rather not add a tool:
+
+```bash
 pip install -e .
 subtitle-search /path/to/recording-folder
 ```
 
 It opens `http://127.0.0.1:8765`.
+
+## Dependencies
+
+Three tiers, so the part you use daily has the fewest ways to break:
+
+| | |
+|---|---|
+| core | `fastapi`, `uvicorn`, `rapidfuzz` — reading, correcting, quoting |
+| `analysis` | `numpy`, `scikit-learn` — the map, graph and signals |
+| `neural` | `sentence-transformers` — paraphrase-aware similarity |
+| `dev` | `pytest`, `httpx` |
+
+```bash
+uv sync --extra analysis --extra neural   # everything
+pip install -e '.[analysis,neural]'       # the pip equivalent
+```
+
+The extras are genuinely optional: `semantics.py` imports numpy *inside* its
+functions, so the app starts, the reader and library work, and only the semantic
+views return a 503 that names the fix. Every rung degrades to the one below —
+UMAP to t-SNE to PCA, the language model to word overlap.
+
+Every requirement carries an upper bound, and `uv.lock` pins the resolved graph
+of all 80 packages. This matters more than install size for a tool meant to open
+a study years after it was recorded: without a ceiling, a future scikit-learn
+that changed a clustering default would quietly reshuffle your map.
 
 ## What it expects
 

@@ -3,26 +3,31 @@ name = "subtitle-search"
 version = "0.1.0"
 description = "A reading-first viewer for Zoom transcripts, with quote highlighting and estimated media seeking."
 requires-python = ">=3.10"
+# Upper bounds are majors, not favourites: the floor is what the code needs, the
+# ceiling is the next release allowed to break it. A study opened in three years
+# should resolve to the same graph it was written against.
 dependencies = [
-    "fastapi>=0.110",
-    "uvicorn>=0.27",
-    "rapidfuzz>=3.6",
+    "fastapi>=0.110,<1",
+    "uvicorn>=0.27,<1",
+    "rapidfuzz>=3.6,<4",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "httpx>=0.27",
+    "pytest>=8.0,<10",
+    "httpx>=0.27,<1",
 ]
 # Reading the corpus by meaning rather than by its tags. scikit-learn is
 # enough for the map; sentence-transformers makes it understand paraphrase,
 # at the cost of downloading a model once.
 analysis = [
-    "numpy>=1.24",
-    "scikit-learn>=1.3",
+    "numpy>=1.24,<3",
+    # Clustering defaults have changed across majors before; the map would
+    # quietly reshuffle under you.
+    "scikit-learn>=1.3,<2",
 ]
 neural = [
-    "sentence-transformers>=2.2",
+    "sentence-transformers>=2.2,<6",
 ]
 
 [project.scripts]
