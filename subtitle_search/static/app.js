@@ -14,6 +14,7 @@ import {
   cacheGeometry,
   chunkIndexAtScroll,
   chunkIndexAtTime,
+  flashCue,
   renderTranscript,
   setCursor,
   updateSpine,
@@ -39,6 +40,7 @@ const ctx = {
     tabSearch: $("tab-search"),
     tabHighlights: $("tab-highlights"),
     themeToggle: $("theme-toggle"),
+    libraryLink: $("library-link"),
     searchInput: $("search-input"),
     regexToggle: $("regex-toggle"),
     searchResults: $("search-results"),
@@ -123,7 +125,13 @@ function syncFollowButton() {
 async function load() {
   const config = await api("/api/config");
   ctx.colors = config.colors;
-  ctx.recordingId = config.default_recording_id;
+  // The library links straight to a recording, and to a moment inside it.
+  const params = new URLSearchParams(location.search);
+  const asked = params.get("recording");
+  ctx.recordingId =
+    (asked && config.recordings.some((r) => r.id === asked) && asked) ||
+    config.default_recording_id;
+  ctx.el.libraryLink.hidden = config.recordings.length < 2;
   if (!ctx.recordingId) {
     ctx.el.chunks.innerHTML = '<p class="empty">No recording loaded.</p>';
     return;
@@ -168,6 +176,15 @@ async function load() {
   // opens on. Search is a keystroke away with `/`.
   ctx.showTab("highlights");
   setCursor(ctx, 0);
+
+  // A link from the library or the themes board carries a moment with it.
+  const at = Number(params.get("t"));
+  if (Number.isFinite(at) && at > 0) {
+    const index = chunkIndexAtTime(ctx, at);
+    setCursor(ctx, index, { scroll: true });
+    seekAndPlay(ctx, at);
+    flashCue(ctx, ctx.chunks[index]?.cue_ids?.[0]);
+  }
   showDiagnostics(data, diagnostics);
 }
 

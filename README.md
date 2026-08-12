@@ -192,6 +192,72 @@ so that layout is the thing worth checking on real files.
 --no-open     do not open a browser
 ```
 
+## A library of recordings
+
+Point it at a folder of recording folders and it opens as a library instead of a
+single reader:
+
+```bash
+subtitle-search ~/study/            # a folder of participant folders
+subtitle-search ~/study/P01/        # one recording, straight into the reader
+```
+
+There is nothing to configure: a folder holding a transcript *is* a recording, so
+a folder that holds none is read as a library of the folders beneath it (two
+levels deep, which is how these arrive). A folder whose transcript cannot be
+parsed is reported and skipped rather than taking the whole library down.
+
+The library lists every recording with its duration, speakers, quote count and
+tags, and searches every transcript at once. Results link straight to the moment
+in the reader.
+
+## Themes: analysis across recordings
+
+`/themes` works on every quote in the library at once, in three views. They exist
+because the work has three shapes, and no single layout serves all of them.
+
+### Board — for when the themes do not exist yet
+
+Quotes as cards, dragged into named columns. This is affinity diagramming: you
+sort until clusters appear, then name them. Drag is the fast path; every card
+also has a menu, so the board works without a mouse.
+
+A quote belongs to **one** theme at a time. That is deliberate — the point of the
+board is to force the decision that a list of tags lets you defer.
+
+Each column shows how many recordings it draws on, which is the difference
+between a theme and one person's preoccupation. The filter narrows the board to
+unsorted, tagged, or untagged quotes so you can work through a pile rather than
+stare at all of it.
+
+### Matrix — for when they do
+
+Tags down the side, recordings across the top, counts in the cells. Rows are
+sorted by how many recordings share the tag, so the findings float to the top and
+the singletons sink. Cell weight is ink, not a colour ramp, so a row reads at a
+glance without matching swatches to a legend.
+
+Click a tag for every quote carrying it; click a cell for one participant's.
+
+### Pairs — for when the codebook has drifted
+
+Tags that share a quote, strongest first. Two codes that always arrive together
+are usually one code wearing two names, or a cause and its effect. It is the
+cheapest signal that a codebook needs consolidating.
+
+### Listening to a theme
+
+Any theme, tag, or cell can be played straight through: each quote in turn, in
+the recording it came from, stopping at its own end. Tone is half of what a quote
+means and it does not survive being written down — being able to hear a theme
+rather than only read it is the reason the recordings are still attached.
+
+Themes are stored in `library.themes.json` at the root of the library, beside the
+recording folders rather than inside any one of them. A theme holds references,
+never copies, so correcting a transcript updates every theme that quote appears
+in, and deleting a quote in the reader removes it from its theme rather than
+leaving a hole.
+
 ## Anonymizing a set of interviews
 
 `scripts/anonymize_zoom.py` takes a directory of downloaded Zoom folders and

@@ -23,7 +23,7 @@ from .editing import BACKUP_SUFFIX, backup_path, read_source
 from .highlights import HighlightStore
 from .mediainfo import container_duration
 from .models import Part, Transcript
-from .vtt import assemble_session, parse_cues, session_digest
+from .vtt import VTTParseError, assemble_session, parse_cues, session_digest
 
 #: Searched in order -- video first, since the collapsible pane can show it and
 #: an audio-only fallback is a strictly smaller feature.
@@ -274,6 +274,11 @@ class Recording:
             "highlights_file": self.store.path.name,
             "duration": self.transcript.duration,
             "part_count": len(self.transcript.parts),
+            "speakers": self.transcript.speakers,
+            "quote_count": len(self.store.list()),
+            # Carried so a page outside the reader can still turn a quote's
+            # session time into a position in the right media file.
+            "parts": [p.to_dict() for p in self.transcript.parts],
         }
 
     def payload(self) -> dict:
@@ -307,16 +312,71 @@ def open_recording(folder: Path) -> Recording:
     )
 
 
+def find_recordings(root: Path) -> list[Path]:
+    """Recording folders at or under ``root``.
+
+    A folder holding a transcript is itself a recording; otherwise its children
+    are searched. Two levels is enough for how these arrive -- a folder of
+    participant folders -- and stopping there keeps an unrelated deep tree from
+    being dragged in.
+    """
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir():
+        return []
+    if any(root.glob("*.vtt")):
+        return [root]
+
+    found: list[Path] = []
+    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+        if any(child.glob("*.vtt")):
+            found.append(child)
+            continue
+        found.extend(
+            grandchild
+            for grandchild in sorted(p for p in child.iterdir() if p.is_dir())
+            if any(grandchild.glob("*.vtt"))
+        )
+    return found
+
+
 class RecordingRegistry:
     """Holds open recordings, keyed by id."""
 
-    def __init__(self) -> None:
+    def __init__(self, root: Path | None = None) -> None:
         self._recordings: dict[str, Recording] = {}
+        self.root: Path | None = Path(root).expanduser().resolve() if root else None
+        #: Folders that looked like recordings but could not be opened.
+        self.failures: list[tuple[str, str]] = []
 
     def add_folder(self, folder: Path) -> Recording:
         recording = open_recording(folder)
         self._recordings[recording.id] = recording
+        if self.root is None:
+            self.root = recording.folder
         return recording
+
+    def add_library(self, root: Path) -> list[Recording]:
+        """Open every recording under a root folder.
+
+        One unreadable folder must not take the library down with it, so
+        failures are collected and reported rather than raised.
+        """
+        root = Path(root).expanduser().resolve()
+        self.root = root
+        opened: list[Recording] = []
+        for folder in find_recordings(root):
+            try:
+                opened.append(self.add_folder(folder))
+            except (RecordingError, VTTParseError, OSError) as exc:
+                # A folder with an unreadable transcript is a folder to report,
+                # not a reason the rest of the study cannot be opened.
+                self.failures.append((folder.name, str(exc)))
+        return opened
+
+    @property
+    def is_library(self) -> bool:
+        return len(self._recordings) > 1 or (self.root is not None and self.root not in
+                                             {r.folder for r in self._recordings.values()})
 
     def get(self, recording_id: str) -> Recording | None:
         return self._recordings.get(recording_id)

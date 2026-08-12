@@ -74,10 +74,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     registry = RecordingRegistry()
+    # One folder or a folder of folders -- a transcript sitting in the folder
+    # itself means it is the recording, so there is nothing to ask about.
     try:
-        registry.add_folder(args.folder)
+        registry.add_library(args.folder)
     except RecordingError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not registry.list():
+        print(f"error: no recordings found in {args.folder}", file=sys.stderr)
+        for name, why in registry.failures:
+            print(f"  {name}: {why}", file=sys.stderr)
         return 1
 
     if args.dump_parse:
@@ -91,15 +98,24 @@ def main(argv: list[str] | None = None) -> int:
     assert recording is not None
     url = f"http://{args.host}:{args.port}/"
 
-    diagnostics = recording.transcript.diagnostics()
-    print(f"  {recording.title}")
-    print(f"  {diagnostics['cue_count']} cues, {diagnostics['chunk_count']} chunks, "
-          f"{len(recording.transcript.speakers)} speakers")
-    if diagnostics["part_count"] > 1:
-        print(f"  {diagnostics['part_count']} recordings joined into one "
-              f"{format_timestamp(diagnostics['duration'])} timeline")
-    if recording.media_kind is None:
-        print("  no media file found -- transcript will be read-only")
+    if registry.is_library:
+        total = sum(len(r.store.list()) for r in registry.list())
+        print(f"  library: {len(registry.list())} recordings, {total} saved quotes")
+        for entry in registry.list():
+            print(f"    {entry.title}  ({format_timestamp(entry.transcript.duration)})")
+    else:
+        diagnostics = recording.transcript.diagnostics()
+        print(f"  {recording.title}")
+        print(f"  {diagnostics['cue_count']} cues, {diagnostics['chunk_count']} chunks, "
+              f"{len(recording.transcript.speakers)} speakers")
+        if diagnostics["part_count"] > 1:
+            print(f"  {diagnostics['part_count']} recordings joined into one "
+                  f"{format_timestamp(diagnostics['duration'])} timeline")
+        if recording.media_kind is None:
+            print("  no media file found -- transcript will be read-only")
+
+    for name, why in registry.failures:
+        print(f"  skipped {name}: {why}")
     print(f"\n  {url}\n")
 
     if not args.no_open:

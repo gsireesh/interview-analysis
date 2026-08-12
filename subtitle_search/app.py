@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .editing import EditError, apply_cue_edit
 from .highlights import COLORS, HighlightError
+from .library import THEMES_FILENAME, ThemeStore, all_quotes, cooccurrence, tag_index, untagged
 from .media import serve_media
 from .search import regex_search, search
 from .session import Recording, RecordingRegistry
@@ -125,9 +126,100 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             raise HTTPException(status_code=404, detail="unknown highlight")
         return JSONResponse({"deleted": highlight_id})
 
+    # -- the library, and the themes built across it ----------------------
+
+    def themes() -> ThemeStore:
+        return app.state.themes
+
+    def corpus() -> list[dict]:
+        return all_quotes(registry)
+
+    @app.get("/api/library")
+    def get_library() -> dict:
+        quotes = corpus()
+        return {
+            "root": str(registry.root) if registry.root else None,
+            "is_library": registry.is_library,
+            "recordings": [r.summary() for r in registry.list()],
+            "unreadable": [{"folder": name, "reason": why} for name, why in registry.failures],
+            "quote_count": len(quotes),
+            "untagged_count": len(untagged(quotes)),
+            "tags": tag_index(quotes),
+            "cooccurrence": cooccurrence(quotes, minimum=1),
+            "colors": list(COLORS),
+        }
+
+    @app.get("/api/library/quotes")
+    def get_library_quotes() -> dict:
+        return {"quotes": corpus()}
+
+    @app.get("/api/library/search")
+    def search_library(q: str = Query(""), limit: int = Query(40, ge=1, le=200)) -> dict:
+        """Search every transcript at once, newest-scoped results first."""
+        results = []
+        for recording in registry.list():
+            for hit in search(recording.transcript, q, limit=limit):
+                results.append({**hit, "recording_id": recording.id, "recording_title": recording.title})
+        results.sort(key=lambda r: (0 if r["kind"] == "exact" else 1, -r["score"]))
+        return {"query": q, "results": results[:limit]}
+
+    @app.get("/api/library/themes")
+    def get_themes() -> dict:
+        quotes = corpus()
+        store = themes()
+        store.prune({q["ref"] for q in quotes})
+        return {"themes": store.list(), "placed": sorted(store.placed_refs())}
+
+    @app.post("/api/library/themes", status_code=201)
+    def create_theme(payload: dict = Body(default={})) -> dict:
+        return {"theme": themes().create(payload.get("title", ""), payload.get("color"))}
+
+    @app.patch("/api/library/themes/{theme_id}")
+    def update_theme(theme_id: str, payload: dict = Body(...)) -> dict:
+        try:
+            return {"theme": themes().update(theme_id, payload)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown theme") from exc
+
+    @app.delete("/api/library/themes/{theme_id}")
+    def delete_theme(theme_id: str) -> JSONResponse:
+        if not themes().delete(theme_id):
+            raise HTTPException(status_code=404, detail="unknown theme")
+        return JSONResponse({"deleted": theme_id})
+
+    @app.post("/api/library/themes/assign")
+    def assign_quote(payload: dict = Body(...)) -> dict:
+        ref = payload.get("ref")
+        if not ref:
+            raise HTTPException(status_code=400, detail="a quote reference is required")
+        try:
+            return {"themes": themes().assign(ref, payload.get("theme_id"), payload.get("index"))}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown theme") from exc
+
+    @app.post("/api/library/themes/order")
+    def reorder_themes(payload: dict = Body(...)) -> dict:
+        return {"themes": themes().reorder(list(payload.get("order") or []))}
+
+    # -- pages -------------------------------------------------------------
+
     @app.get("/")
     def index() -> FileResponse:
+        # A single recording opens straight into the reader; there is no library
+        # worth showing for one folder.
+        page = "library.html" if registry.is_library else "index.html"
+        return FileResponse(STATIC_DIR / page)
+
+    @app.get("/reader")
+    def reader() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/themes")
+    def themes_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "themes.html")
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    root = registry.root or Path.cwd()
+    app.state.themes = ThemeStore(root / THEMES_FILENAME)
     return app

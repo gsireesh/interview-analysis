@@ -36,3 +36,4 @@ htmlcov/
 *.flac
 *.ogg
 *.highlights.json
+library.themes.json
