@@ -20,6 +20,9 @@
       <button class="btn" data-mode="board" type="button" aria-pressed="true">Board</button>
       <button class="btn" data-mode="matrix" type="button" aria-pressed="false">Matrix</button>
       <button class="btn" data-mode="pairs" type="button" aria-pressed="false">Pairs</button>
+      <button class="btn" data-mode="map" type="button" aria-pressed="false">Map</button>
+      <button class="btn" data-mode="graph" type="button" aria-pressed="false">Graph</button>
+      <button class="btn" data-mode="signals" type="button" aria-pressed="false">Signals</button>
     </nav>
   </div>
 
@@ -72,6 +75,62 @@
     <span class="sheet__count" id="pairs-note"></span>
   </header>
   <div id="pairs"></div>
+</main>
+
+<!-- Map: quotes placed by what they say, not by what they were tagged. Lasso a
+     cluster to turn it into a theme. -->
+<main class="stage" id="view-map" hidden>
+  <div class="stage__toolbar">
+    <label class="board__filter">
+      <span>Colour by</span>
+      <select id="map-colour">
+        <option value="theme">my themes</option>
+        <option value="cluster">what the language groups</option>
+        <option value="recording">recording</option>
+      </select>
+    </label>
+    <label class="board__filter">
+      <input type="checkbox" id="map-neural">
+      <span id="map-neural-label">use the language model</span>
+    </label>
+    <span class="board__hint" id="map-note"></span>
+    <button class="btn" id="map-make-theme" type="button" hidden>Make a theme from these</button>
+  </div>
+  <div class="stage__body">
+    <svg class="map" id="map" role="img" aria-label="Quotes arranged by similarity"></svg>
+    <aside class="stage__side" id="map-side">
+      <p class="empty">Click a point to read the quote and what sits nearest it. Drag a
+        loop around a group to turn it into a theme.</p>
+    </aside>
+  </div>
+</main>
+
+<!-- Graph: tags as a network, pulled together by the quotes they share. -->
+<main class="stage" id="view-graph" hidden>
+  <div class="stage__toolbar">
+    <span class="board__hint">tags pull together when they share quotes · drag a node to pull it out</span>
+  </div>
+  <div class="stage__body">
+    <svg class="graph" id="graph" role="img" aria-label="Tags linked by shared quotes"></svg>
+    <aside class="stage__side" id="graph-side">
+      <p class="empty">Click a tag to see its quotes and what it travels with.</p>
+    </aside>
+  </div>
+</main>
+
+<!-- Signals: is the study finished, and what refuses to group. -->
+<main class="sheet" id="view-signals" hidden>
+  <header class="sheet__head">
+    <h2 class="sheet__title">Are new interviews still finding new tags?</h2>
+    <span class="sheet__count" id="saturation-note"></span>
+  </header>
+  <div id="saturation"></div>
+
+  <header class="sheet__head">
+    <h2 class="sheet__title">Quotes least like anything else</h2>
+    <span class="sheet__count">negative cases are where a theme's edge is</span>
+  </header>
+  <div id="loneliest"></div>
 </main>
 
 <div class="queue" id="queue" hidden>

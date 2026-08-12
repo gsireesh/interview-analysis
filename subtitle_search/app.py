@@ -16,6 +16,14 @@ from fastapi.staticfiles import StaticFiles
 from .editing import EditError, apply_cue_edit
 from .highlights import COLORS, HighlightError
 from .library import THEMES_FILENAME, ThemeStore, all_quotes, cooccurrence, tag_index, untagged
+from .semantics import (
+    EMBEDDINGS_FILENAME,
+    Semantics,
+    SemanticsUnavailable,
+    VectorCache,
+    neural_available,
+    saturation,
+)
 from .media import serve_media
 from .search import regex_search, search
 from .session import Recording, RecordingRegistry
@@ -201,6 +209,110 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
     def reorder_themes(payload: dict = Body(...)) -> dict:
         return {"themes": themes().reorder(list(payload.get("order") or []))}
 
+    # -- reading the corpus by meaning ------------------------------------
+
+    def semantics_for(quotes: list[dict], neural: bool):
+        """Vectors for the current corpus, rebuilt only when it changes.
+
+        Encoding is the slow part, so the result is held against a fingerprint
+        of the quote texts and the backend that produced it.
+        """
+        fingerprint = (
+            tuple(sorted(f"{q['ref']}:{hash(q.get('text',''))}" for q in quotes)),
+            bool(neural),
+        )
+        cached = getattr(app.state, "semantics", None)
+        if cached and cached[0] == fingerprint:
+            return cached[1]
+        model = Semantics.build(quotes, app.state.vectors, prefer_neural=neural)
+        app.state.semantics = (fingerprint, model)
+        return model
+
+    @app.get("/api/library/semantics")
+    def get_semantics(
+        neural: bool = Query(False, description="use the sentence-transformer model"),
+        clusters: int = Query(0, ge=0, le=20),
+    ) -> dict:
+        quotes = corpus()
+        try:
+            model = semantics_for(quotes, neural)
+            coords = model.project()
+            labels, count = model.cluster(clusters or None)
+            terms = model.cluster_terms(labels)
+        except SemanticsUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        grouped: dict[int, list[str]] = {}
+        for ref, label in zip(model.refs, labels):
+            grouped.setdefault(int(label), []).append(ref)
+
+        return {
+            "backend": model.backend,
+            "projector": model.projector,
+            "neural_available": neural_available(),
+            "points": [
+                {"ref": ref, "x": round(x, 5), "y": round(y, 5), "cluster": int(label)}
+                for ref, (x, y), label in zip(model.refs, coords, labels)
+            ],
+            "clusters": [
+                {
+                    "id": label,
+                    "size": len(refs),
+                    "terms": terms.get(label, []),
+                    "refs": refs,
+                }
+                for label, refs in sorted(grouped.items())
+            ],
+            "cluster_count": count,
+            "loneliest": model.loneliest(),
+            "saturation": saturation(quotes, [r.summary() for r in registry.list()]),
+        }
+
+    @app.get("/api/library/similar")
+    def get_similar(
+        ref: str = Query(...), k: int = Query(6, ge=1, le=40), neural: bool = Query(False)
+    ) -> dict:
+        try:
+            model = semantics_for(corpus(), neural)
+            return {"ref": ref, "similar": model.similar(ref, count=k)}
+        except SemanticsUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/library/suggestions")
+    def get_suggestions(neural: bool = Query(False)) -> dict:
+        """Where each unsorted quote would go, judged by the company it keeps."""
+        quotes = corpus()
+        store = themes()
+        placed = {ref: theme["id"] for theme in store.list() for ref in theme["refs"]}
+        if not placed:
+            return {"suggestions": []}
+        try:
+            model = semantics_for(quotes, neural)
+        except SemanticsUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        out = []
+        for quote in quotes:
+            if quote["ref"] in placed:
+                continue
+            hint = model.suggest_theme(quote["ref"], placed)
+            if hint:
+                out.append({"ref": quote["ref"], **hint})
+        out.sort(key=lambda s: -s["confidence"])
+        return {"suggestions": out}
+
+    @app.post("/api/library/themes/from-refs", status_code=201)
+    def theme_from_refs(payload: dict = Body(...)) -> dict:
+        """Make a theme out of a set of quotes, as drawn on the map."""
+        refs = [str(ref) for ref in (payload.get("refs") or [])]
+        if not refs:
+            raise HTTPException(status_code=400, detail="no quotes were selected")
+        store = themes()
+        theme = store.create(payload.get("title", ""), payload.get("color"))
+        for ref in refs:
+            store.assign(ref, theme["id"])
+        return {"theme": theme, "themes": store.list()}
+
     # -- pages -------------------------------------------------------------
 
     @app.get("/")
@@ -221,4 +333,6 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
 
     root = registry.root or Path.cwd()
     app.state.themes = ThemeStore(root / THEMES_FILENAME)
+    app.state.vectors = VectorCache(root / EMBEDDINGS_FILENAME)
+    app.state.semantics = None
     return app

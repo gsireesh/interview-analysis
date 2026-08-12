@@ -249,6 +249,54 @@ Tags that share a quote, strongest first. Two codes that always arrive together
 are usually one code wearing two names, or a cause and its effect. It is the
 cheapest signal that a codebook needs consolidating.
 
+### Map — for arguing with your codebook
+
+```bash
+pip install -e '.[analysis]'          # the map, graph and signals
+pip install -e '.[analysis,neural]'   # + understands paraphrase
+```
+
+Every quote placed by what it *says*, not by what you tagged it. The clusters
+here are formed by the language, so they can disagree with your themes — and
+where they do is either a theme you missed or a distinction you decided not to
+make. Drag a loop around a group to turn it into a theme.
+
+Colour by your themes, by the clusters the language forms, or by recording.
+Click any point for the quote and its nearest neighbours in meaning, and click
+through those to walk the corpus by similarity rather than by tag.
+
+Two backends. **Word overlap** is the default: instant, local, no download, and
+honestly limited — it cannot tell that *"it never works"* and *"constantly
+broken"* are the same complaint. The **language model** can, and the difference
+is stark; on the same pair of quotes about consent and cloud storage, word
+overlap scores `0.00` and the model scores `0.34`.
+
+The model is the one thing in this tool that touches the network: it downloads
+once, then lives on your machine, and vectors are cached in
+`library.embeddings.npz` so it is paid for once. **Your quotes are never sent
+anywhere** — encoding happens in this process.
+
+### Graph — the shape of the codebook
+
+Tags as a network, pulled together by the quotes they share. The same numbers as
+Pairs, arranged so you can see what clumps, what dangles off the side, and what
+sits on its own.
+
+### Signals — is the study finished?
+
+The grounded-theory question, drawn as the curve it actually is: cumulative
+distinct tags against interviews, in the order they were recorded. A curve still
+climbing at the last participant is the study saying it is not done. It measures
+the codebook rather than the world, so a flat curve can equally mean you stopped
+noticing — worth reading as a prompt, not a verdict.
+
+Underneath: the quotes least like anything else. Negative cases are where a
+theme's real boundary is, and they are the easiest thing to lose because nothing
+groups them.
+
+**Nothing here files anything.** Every cluster and every ranking is a proposal;
+a person accepts it or does not.
+
 ### Listening to a theme
 
 Any theme, tag, or cell can be played straight through: each quote in turn, in

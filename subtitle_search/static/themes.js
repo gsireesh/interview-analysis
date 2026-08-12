@@ -17,6 +17,13 @@
 
 import { $, api, escapeHtml, formatTime } from "./util.js";
 import { applyStoredTheme, bindThemeToggle, notify } from "./chrome.js";
+import {
+  initSemantics,
+  invalidateSemantics,
+  renderGraph,
+  renderMap,
+  renderSignals,
+} from "./semantics.js";
 
 const el = {
   meta: $("meta"),
@@ -27,6 +34,9 @@ const el = {
   boardFilter: $("board-filter"),
   boardProgress: $("board-progress"),
   addTheme: $("add-theme"),
+  mapView: $("view-map"),
+  graphView: $("view-graph"),
+  signalsView: $("view-signals"),
   matrixView: $("view-matrix"),
   matrix: $("matrix"),
   matrixNote: $("matrix-note"),
@@ -104,9 +114,18 @@ function showMode(mode) {
   el.board.hidden = mode !== "board";
   el.matrixView.hidden = mode !== "matrix";
   el.pairsView.hidden = mode !== "pairs";
+  el.mapView.hidden = mode !== "map";
+  el.graphView.hidden = mode !== "graph";
+  el.signalsView.hidden = mode !== "signals";
   for (const button of el.modes.querySelectorAll("[data-mode]")) {
     button.setAttribute("aria-pressed", String(button.dataset.mode === mode));
   }
+
+  // These three cost real work -- encoding, a layout simulation -- so they run
+  // when asked for rather than on load, and only need measuring once visible.
+  if (mode === "map") renderMap();
+  if (mode === "graph") renderGraph();
+  if (mode === "signals") renderSignals();
 }
 
 el.modes.addEventListener("click", (event) => {
@@ -166,6 +185,7 @@ async function assign(ref, themeId) {
     state.themes = themes;
     state.placed = new Set(themes.flatMap((t) => t.refs));
     renderBoard();
+    if (state.mode === "map") renderMap();
   } catch (error) {
     notify(el.notices, `Could not move that quote: ${error.message}`, { kind: "warn" });
   }
@@ -564,6 +584,14 @@ el.queueMedia.addEventListener("play", () => (el.queuePlay.textContent = "❚❚
 el.queueMedia.addEventListener("pause", () => (el.queuePlay.textContent = "▶"));
 
 /* ---------------------------------------------------------------- start -- */
+
+initSemantics({
+  state,
+  quoteCard,
+  startQueue,
+  notify: (message, options) => notify(el.notices, message, options),
+  refreshBoard: renderBoard,
+});
 
 applyStoredTheme();
 bindThemeToggle($("theme-toggle"));

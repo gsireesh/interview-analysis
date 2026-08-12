@@ -14,6 +14,16 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
 ]
+# Reading the corpus by meaning rather than by its tags. scikit-learn is
+# enough for the map; sentence-transformers makes it understand paraphrase,
+# at the cost of downloading a model once.
+analysis = [
+    "numpy>=1.24",
+    "scikit-learn>=1.3",
+]
+neural = [
+    "sentence-transformers>=2.2",
+]
 
 [project.scripts]
 subtitle-search = "subtitle_search.__main__:main"
