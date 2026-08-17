@@ -57,3 +57,21 @@ export function lastAtOrBefore(values, target) {
   }
   return found;
 }
+
+
+/**
+ * Write a preference down, and carry on if it cannot be written.
+ *
+ * Storage can be unavailable or full -- private windows, a full origin quota --
+ * and ``setItem`` throws when it is. Remembering a choice is the least important
+ * part of making it, so a failure here must never be able to stop the choice
+ * itself from taking effect.
+ */
+export function remember(key, value) {
+  try {
+    localStorage.setItem(key, String(value));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}

@@ -8,7 +8,7 @@
  * picking the right file and converting to a position inside it happens here.
  */
 
-import { formatTime } from "./util.js";
+import { formatTime, remember } from "./util.js";
 
 const DOCK_KEY = "subtitle-search:dock";
 const HEIGHT_KEY = "subtitle-search:dockHeight";
@@ -187,8 +187,10 @@ export function initPlayer(ctx) {
     rate.value = String(storedRate());
     applyRate(media, storedRate());
     rate.addEventListener("change", () => {
-      localStorage.setItem(RATE_KEY, rate.value);
+      // Speed first, remembering it second: a storage failure must not be able to
+      // swallow the change the listener exists to make.
       applyRate(media, Number(rate.value));
+      remember(RATE_KEY, rate.value);
     });
   }
 
@@ -296,8 +298,8 @@ export function stepRate(ctx, direction) {
   const options = [...select.options].map((option) => option.value);
   const next = Math.max(0, Math.min(options.length - 1, options.indexOf(select.value) + direction));
   select.value = options[next];
-  localStorage.setItem(RATE_KEY, select.value);
   applyRate(ctx.el.media, Number(select.value));
+  remember(RATE_KEY, select.value);
   return Number(select.value);
 }
 
