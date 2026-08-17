@@ -252,10 +252,16 @@ async function requestSplit(ctx, cueId, offset, text) {
   // The moment after a cut is when you know you did not mean it, and a toast is
   // already on screen saying what happened -- so the undo goes in the toast. It
   // carries the two halves as written, so it can only put back these same words.
+  // Timestamps read to the second, so a pause shorter than that would print as a
+  // range from a time to itself, which looks like a bug rather than a short gap.
+  const from = formatTime(result.at);
+  const to = formatTime(result.tail_at);
   ctx.notify(
     result.measured
-      ? `Cut on the measured pause, ${formatTime(result.at)} to ${formatTime(result.tail_at)}.`
-      : `Cut at an estimated ${formatTime(result.at)} — measure timings for an exact one.`,
+      ? from === to
+        ? `Cut on the measured pause at ${from}.`
+        : `Cut on the measured pause, ${from} to ${to}.`
+      : `Cut at an estimated ${from} — measure timings for an exact one.`,
     {
       action: {
         label: "Undo",
@@ -350,6 +356,9 @@ export async function splitAtWord(ctx, cueEl, node, nodeOffset) {
     return;
   }
 
+  // Measuring the caption against the audio takes a moment, and the first one in
+  // a session waits for the model to load.
+  const done = ctx.working("Cutting the caption\u2026");
   try {
     const result = await requestSplit(ctx, cueId, offset, item.text);
     if (!result) return;
@@ -359,6 +368,8 @@ export async function splitAtWord(ctx, cueEl, node, nodeOffset) {
     if (landed >= 0) setCursor(ctx, landed, { scroll: true });
   } catch (error) {
     ctx.notify(`Could not split that caption: ${error.message}`, { kind: "warn", key: null });
+  } finally {
+    done();
   }
 }
 

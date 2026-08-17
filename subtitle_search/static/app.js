@@ -24,7 +24,7 @@ import { cue, initPlayer, nudge, seekAndPlay, stepRate, togglePlay } from "./pla
 import { initSearch } from "./search.js";
 import { copySelection, hideQuoteBar, initHighlights, renderList, save } from "./highlights.js";
 import { enterEdit, exitEdit, isEditing, splitAtWord } from "./editing.js";
-import { notify } from "./chrome.js";
+import { notify, working } from "./chrome.js";
 
 const ctx = {
   el: {
@@ -96,6 +96,8 @@ const ctx = {
 /* ---------------------------------------------------------------- notices -- */
 
 ctx.notify = (message, options) => notify(ctx.el.notices, message, options);
+//: For work that takes seconds. Returns the function that takes the message away.
+ctx.working = (message) => working(ctx.el.notices, message);
 
 /* ------------------------------------------------------------------ tabs -- */
 

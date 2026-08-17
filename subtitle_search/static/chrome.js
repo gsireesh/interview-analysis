@@ -35,8 +35,16 @@ export function bindThemeToggle(button) {
  * undo belongs: the moment after doing something is when you know you did not mean
  * it, and a toast is already on screen saying what happened. A toast with an action
  * lingers longer, because dismissing it is the same as declining.
+ *
+ * ``sticky`` leaves it on screen until the caller takes it away. For work that
+ * takes seconds -- anything that has to read the audio -- since an action with no
+ * sign of progress is indistinguishable from one that did nothing.
  */
-export function notify(host, message, { kind = "info", key = null, action = null } = {}) {
+export function notify(
+  host,
+  message,
+  { kind = "info", key = null, action = null, sticky = false } = {}
+) {
   if (!host || (key && localStorage.getItem(key) === "dismissed")) return;
 
   const toast = document.createElement("div");
@@ -69,10 +77,24 @@ export function notify(host, message, { kind = "info", key = null, action = null
   }
 
   host.appendChild(toast);
-  if (!key) {
+  if (!key && !sticky) {
     const timer = setTimeout(close, action ? LINGER.action : LINGER[kind] || LINGER.info);
     // Reading a message should not race a timer.
     toast.addEventListener("mouseenter", () => clearTimeout(timer));
   }
   return toast;
+}
+
+
+/**
+ * Say that something is happening, and hand back the way to stop saying it.
+ *
+ * The first caption aligned in a session waits on the model loading, which is
+ * seconds. Without this the interface simply goes quiet, and quiet is exactly what
+ * doing nothing looks like.
+ */
+export function working(host, message) {
+  const toast = notify(host, message, { sticky: true });
+  if (toast) toast.classList.add("toast--working");
+  return () => toast?.remove();
 }

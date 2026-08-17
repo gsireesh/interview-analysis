@@ -81,8 +81,17 @@ function handCandidates(ctx) {
  */
 function renderHandOver(ctx, anchors) {
   const candidates = handCandidates(ctx).filter((name) => name !== anchors.speaker);
-  ctx.el.quotebarHand.hidden = candidates.length === 0;
-  if (!candidates.length) return;
+  ctx.el.quotebarHand.hidden = false;
+
+  // A transcript naming one person -- the in-person case, a whole room under one
+  // label -- has nobody to hand words *to* yet. Saying so beats the control
+  // silently not existing, which reads as the feature being missing.
+  if (!candidates.length) {
+    ctx.el.quotebarHand.innerHTML =
+      `<span class="quotebar__lead">said by</span>` +
+      `<span class="quotebar__none">name someone in the strip above first</span>`;
+    return;
+  }
 
   const roster = ctx.data?.transcript?.roster || [];
   ctx.el.quotebarHand.innerHTML =
@@ -107,6 +116,10 @@ async function handOverSelection(ctx, speaker) {
 
   window.getSelection()?.removeAllRanges();
   hideQuoteBar(ctx);
+  // Cutting a caption measures it against the audio first, and the first
+  // measurement in a session waits for the model to load. Several seconds of
+  // silence after a click is indistinguishable from a click that did nothing.
+  const done = ctx.working(`Giving those words to ${speaker}\u2026`);
   try {
     const result = await api(`/api/recordings/${ctx.recordingId}/selection/speaker`, {
       method: "POST",
@@ -133,6 +146,8 @@ async function handOverSelection(ctx, speaker) {
       kind: "warn",
       key: null,
     });
+  } finally {
+    done();
   }
 }
 
