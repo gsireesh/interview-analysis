@@ -151,6 +151,7 @@ playback**, and a "Follow along" button appears to re-attach.
 | `f` | toggle following |
 | `[` / `]` | slower / faster |
 | `s` | break this block into its captions |
+| double-click | cut the caption in front of that word |
 | `1`…`9` | assign this block to a speaker, then move on |
 | `Esc` | clear selection |
 
@@ -194,17 +195,38 @@ so the file still re-parses as it did. The cut point travels with the text it wa
 measured against, so it lands between the same two words even if the line has
 unsaved typing in it.
 
-A split has **no undo**: rejoining two captions is not implemented, so an
-accidental double-click has to be put right by hand in the transcript (or from
-`_original`, which is always the file as Zoom wrote it). Nothing is lost either
-way — no words change and quotes re-anchor — but it is a nuisance worth knowing
-about before you go double-clicking around.
+The toast that reports a cut carries an **Undo**, since the moment after cutting
+is when you find out you did not mean it. It puts the two halves back and restores
+the transcript byte for byte. Undo carries the two halves *as written*, so if
+anything else moved the captions in between it refuses rather than joining
+whichever two now hold those numbers.
 
-Splitting is the one edit that changes the *number* of captions, which renumbers
-every caption after it. Quotes are re-anchored across that shift: a quote after
-the cut follows its caption, and a quote inside the split one lands in whichever
-half now holds its words — including a quote that straddles the cut, which ends up
-spanning both.
+### Joining captions back together
+
+Zoom's opposite failure is chopping one sentence across three captions, so a quote
+that reads as a single thought is three anchors underneath.
+
+In edit mode, **⌫ at the start of a line joins it to the line above** — what
+backspace means in every text editor, applied to captions. The joined caption runs
+from the first one's start to the last one's end, and the words are joined in
+order.
+
+One caption carries one speaker, so joining across two of them keeps the first
+label and drops the other. That is said out loud in a warning rather than left to
+be discovered, because it is usually a sign the join was not what you wanted.
+
+Joining is how Undo works, and both go through the same request. Quotes follow
+their words: a quote inside an absorbed caption moves to where those words now sit,
+one spanning the whole run collapses into the single caption, and ids after it shift
+back. **Measured word timings need no attention at all** — joining leaves the
+recording's sequence of words identical, so every measurement still describes the
+same word, exactly as with a split.
+
+Splitting and joining are the two edits that change the *number* of captions,
+which renumbers every caption after them. Quotes are re-anchored across that
+shift rather than left pointing at their old numbers: a quote after a cut follows
+its caption, and a quote inside the split one lands in whichever half now holds
+its words — including one that straddles the cut, which ends up spanning both.
 
 ## Word timings
 

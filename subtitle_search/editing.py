@@ -28,7 +28,15 @@ from pathlib import Path
 
 from .models import Cue
 from .timings import split_words, word_index_of
-from .vtt import read_speakers, splice_cue, splice_speaker, split_cue_block, write_roster
+from .vtt import (
+    merge_cue_blocks,
+    merged_payload,
+    read_speakers,
+    splice_cue,
+    splice_speaker,
+    split_cue_block,
+    write_roster,
+)
 
 
 class EditError(ValueError):
@@ -246,9 +254,92 @@ def apply_cue_split(
     return {
         "changed": True,
         "cue_ids": [f"c{cue.index}", f"c{cue.index + 1}"],
+        # The two halves as written, so undoing this can prove it is putting back
+        # the same words rather than whichever captions now hold those numbers.
+        "halves": [head, tail],
         "at": round(at, 3),
         "tail_at": round(tail_at, 3),
         "measured": measured,
+        "backup_created": backup_created,
+        "highlights": touched,
+    }
+
+
+#: A guard, not a policy: joining a whole transcript into one caption is never
+#: what anyone meant, and a runaway request should not be silently obeyed.
+MAX_MERGE = 50
+
+
+def apply_cue_merge(
+    recording, cue_id: str, through_cue_id: str, expect: list[str] | None = None
+) -> dict:
+    """Join a run of consecutive captions into one.
+
+    Two jobs. It undoes a split -- the halves go back together, which is what makes
+    an accidental cut recoverable rather than something to repair by hand. And it
+    fixes Zoom's opposite failure, one sentence chopped across three captions, where
+    a quote that reads as a single thought is three anchors underneath.
+
+    ``expect`` is the texts the caller believed it was joining. Undo is offered in a
+    toast, cue ids are positional, and anything can have happened in between -- so
+    if the transcript has moved underneath, this refuses rather than joining
+    whichever captions now hold those numbers.
+    """
+    transcript = recording.transcript
+    first = transcript.cue(cue_id)
+    last = transcript.cue(through_cue_id)
+    if first is None or last is None:
+        raise EditError("those lines are not part of this transcript")
+    if first.index > last.index:
+        first, last = last, first
+    if first.index == last.index:
+        raise EditError("a join needs two captions, not one")
+    if first.part_index != last.part_index:
+        raise EditError("captions from two different recordings cannot be joined")
+    if last.index - first.index + 1 > MAX_MERGE:
+        raise EditError(f"that is more than {MAX_MERGE} captions to join at once")
+
+    part_index = first.part_index
+    targets = [
+        cue
+        for cue in transcript.cues
+        if cue.part_index == part_index and first.index <= cue.index <= last.index
+    ]
+
+    if expect is not None and [normalize_edit(t) for t in expect] != [
+        normalize_edit(cue.text) for cue in targets
+    ]:
+        raise EditError("the transcript has changed since then; nothing was joined")
+
+    merged, starts, lengths = merged_payload(targets)
+    if not merged:
+        raise EditError("joining those would leave a caption with no words")
+
+    # The label that survives is the first one, since one caption carries one
+    # speaker. Reported back, so the interface can say so when they differed.
+    speakers = [cue.speaker for cue in targets if cue.speaker]
+    absorbed = [name for name in speakers[1:] if name != speakers[0]] if speakers else []
+
+    vtt_path = recording.part_files[part_index].vtt_path
+    part = transcript.part(part_index)
+    backup_created = ensure_backup(vtt_path)
+    content = merge_cue_blocks(
+        recording.sources[part_index], targets, part.offset if part else 0.0
+    )
+    write_atomically(vtt_path, content)
+    recording.sources[part_index] = content
+    recording.reload_transcript()
+
+    # Word timings need no attention at all: joining leaves the part's sequence of
+    # words identical, so every measurement still describes the same word.
+    touched = recording.store.remap_merge(first.index, starts, lengths)
+
+    return {
+        "changed": True,
+        "cue_id": f"c{first.index}",
+        "joined": len(targets),
+        "speaker": speakers[0] if speakers else None,
+        "absorbed_speakers": absorbed,
         "backup_created": backup_created,
         "highlights": touched,
     }

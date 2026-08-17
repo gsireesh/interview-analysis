@@ -304,3 +304,45 @@ def test_a_split_measures_the_caption_it_is_about_to_cut(client, monkeypatch):
     # Nothing was measured beforehand: the split asked for that one caption.
     assert body["measured"] is True
     assert body["at"] < body["tail_at"]
+
+
+def test_merge_route_joins_captions_and_returns_the_session(client):
+    api, rec_id = client
+    body = api.post(
+        f"/api/recordings/{rec_id}/cues/c0/merge", json={"through": "c1"}
+    ).json()
+    assert body["joined"] == 2
+    assert body["cue_id"] == "c0"
+
+    cues = {c["id"]: c["text"] for c in body["recording"]["transcript"]["cues"]}
+    assert cues["c0"].startswith("Cool. And then I will share my screen")
+    assert cues["c0"].endswith("So, let me share my screen.")
+    assert len(cues) == 4
+
+
+def test_a_split_can_be_undone_over_the_api(client):
+    api, rec_id = client
+    text = "I can see it. Looks good on my end."
+
+    split = api.post(
+        f"/api/recordings/{rec_id}/cues/c3/split",
+        json={"offset": text.index("Looks"), "text": text, "align": False},
+    ).json()
+    undone = api.post(
+        f"/api/recordings/{rec_id}/cues/{split['cue_ids'][0]}/merge",
+        json={"through": split["cue_ids"][1], "expect": split["halves"]},
+    ).json()
+
+    cues = {c["id"]: c["text"] for c in undone["recording"]["transcript"]["cues"]}
+    assert cues["c3"] == text
+    assert len(cues) == 5
+
+
+def test_undo_over_the_api_refuses_stale_expectations(client):
+    api, rec_id = client
+    response = api.post(
+        f"/api/recordings/{rec_id}/cues/c0/merge",
+        json={"through": "c1", "expect": ["something else", "entirely"]},
+    )
+    assert response.status_code == 400
+    assert "changed since then" in response.json()["detail"]

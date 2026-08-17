@@ -61,7 +61,7 @@ export function enterEdit(ctx, chunkIndex) {
   bar.className = "edit-bar";
   // Zoom attributes badly, so who said a line is as editable as what they said.
   bar.innerHTML =
-    `<span class="edit-bar__hint">Editing ${chunk.cue_ids.length} line${chunk.cue_ids.length === 1 ? "" : "s"} · Enter saves and moves on · \u2318\u21a9 splits the line at the cursor · Esc finishes</span>` +
+    `<span class="edit-bar__hint">Editing ${chunk.cue_ids.length} line${chunk.cue_ids.length === 1 ? "" : "s"} · Enter saves and moves on · \u2318\u21a9 splits at the cursor · \u232b at the start joins upward · Esc finishes</span>` +
     `<datalist id="known-speakers">${(ctx.data?.transcript?.speakers || [])
       .map((name) => `<option value="${escapeHtml(name)}"></option>`)
       .join("")}</datalist>` +
@@ -133,6 +133,18 @@ function bindLines(ctx, container) {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       splitAtCaret(ctx, field);
+    } else if (
+      event.key === "Backspace" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      caretOffset(field) === 0 &&
+      window.getSelection()?.isCollapsed
+    ) {
+      // What backspace at the start of a line means in every text editor: join
+      // it to the line above. Here that joins two captions, which is the repair
+      // for one sentence Zoom chopped into several.
+      event.preventDefault();
+      joinWithPrevious(ctx, container, field);
     } else if (event.key === "Enter") {
       event.preventDefault();
       const rows = Array.from(container.querySelectorAll(".cue-line__text"));
@@ -237,10 +249,19 @@ async function requestSplit(ctx, cueId, offset, text) {
   }
   // Say which it was. A measured cut lands in the real pause between the two
   // speakers; an estimated one is the old interpolation, and worth knowing about.
+  // The moment after a cut is when you know you did not mean it, and a toast is
+  // already on screen saying what happened -- so the undo goes in the toast. It
+  // carries the two halves as written, so it can only put back these same words.
   ctx.notify(
     result.measured
       ? `Cut on the measured pause, ${formatTime(result.at)} to ${formatTime(result.tail_at)}.`
-      : `Cut at an estimated ${formatTime(result.at)} — measure timings for an exact one.`
+      : `Cut at an estimated ${formatTime(result.at)} — measure timings for an exact one.`,
+    {
+      action: {
+        label: "Undo",
+        onAct: () => joinCaptions(ctx, result.cue_ids[0], result.cue_ids[1], result.halves),
+      },
+    }
   );
   for (const updated of result.highlights || []) {
     const existing = ctx.highlights.find((h) => h.id === updated.id);
@@ -339,6 +360,98 @@ export async function splitAtWord(ctx, cueEl, node, nodeOffset) {
   } catch (error) {
     ctx.notify(`Could not split that caption: ${error.message}`, { kind: "warn", key: null });
   }
+}
+
+/**
+ * Put a run of captions back together.
+ *
+ * Undoing a cut and repairing Zoom's opposite failure -- one sentence chopped
+ * across three captions -- are the same operation, so they are the same request.
+ *
+ * ``expect`` is the captions as the caller believes them to read. Cue ids are
+ * positional and an undo can be pressed after something else has moved them, so
+ * the server compares before joining and refuses if the transcript has shifted.
+ */
+export async function joinCaptions(ctx, cueId, through, expect, { keepEditing = false } = {}) {
+  try {
+    const result = await api(`/api/recordings/${ctx.recordingId}/cues/${cueId}/merge`, {
+      method: "POST",
+      body: { through, expect },
+    });
+    if (result.backup_created) {
+      ctx.notify(`Original transcript saved as ${result.backup_created}.`);
+    }
+    // One caption carries one speaker, so a join across two of them drops a name.
+    // That is worth saying out loud rather than discovering later.
+    if (result.absorbed_speakers?.length) {
+      ctx.notify(
+        `Joined ${result.joined} captions under ${result.speaker} — ${result.absorbed_speakers.join(", ")} no longer named on those words.`,
+        { kind: "warn", key: null }
+      );
+    } else {
+      ctx.notify(`Joined ${result.joined} captions into one.`);
+    }
+
+    for (const updated of result.highlights || []) {
+      const existing = ctx.highlights.find((h) => h.id === updated.id);
+      if (existing) Object.assign(existing, updated);
+    }
+    if (result.highlights?.length) ctx.onHighlightsChanged?.();
+
+    remapJoinedCues(ctx, result.cue_id, result.joined);
+    ctx.onTranscriptChanged?.(
+      result.recording,
+      keepEditing ? { keepEditingCue: result.cue_id } : {}
+    );
+    if (!keepEditing) {
+      const landed = ctx.chunks.findIndex((c) => c.cue_ids.includes(result.cue_id));
+      if (landed >= 0) setCursor(ctx, landed, { scroll: true });
+    }
+    return result;
+  } catch (error) {
+    ctx.notify(`Could not join those captions: ${error.message}`, { kind: "warn", key: null });
+    return null;
+  }
+}
+
+/** Join the line being edited to the one above it, and stay in edit mode. */
+async function joinWithPrevious(ctx, container, field) {
+  const rows = Array.from(container.querySelectorAll(".cue-line"));
+  const row = field.closest(".cue-line");
+  const position = rows.indexOf(row);
+  if (position <= 0) {
+    ctx.notify("Nothing above this line in the block to join it to.");
+    return;
+  }
+
+  // Save any typing first: a join works on the captions as the file has them.
+  await commit(ctx, field);
+  const above = ctx.cueById.get(rows[position - 1].dataset.cueId);
+  const here = ctx.cueById.get(row.dataset.cueId);
+  if (!above || !here) return;
+
+  // The joined text must not be overwritten by this field on the way out.
+  field.dataset.skip = "1";
+  await joinCaptions(ctx, above.id, here.id, [above.text, here.text], { keepEditing: true });
+}
+
+/** Shift the manually-expanded cue ids back over captions that were absorbed. */
+function remapJoinedCues(ctx, survivor, joined) {
+  const at = Number(survivor.slice(1));
+  const gone = joined - 1;
+  const moved = new Set();
+  let touched = false;
+  for (const id of ctx.splitCues) {
+    const index = Number(id.slice(1));
+    if (index >= at && index <= at + gone) {
+      touched = true;  // any of the absorbed captions was open
+      continue;
+    }
+    moved.add(index > at + gone ? `c${index - gone}` : id);
+  }
+  if (touched) moved.add(survivor);
+  ctx.splitCues.clear();
+  moved.forEach((id) => ctx.splitCues.add(id));
 }
 
 /** Shift the manually-expanded cue ids past an inserted caption. */

@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from .editing import (
     EditError,
     apply_cue_edit,
+    apply_cue_merge,
     apply_cue_split,
     apply_roster_edit,
     apply_speaker_edit,
@@ -199,6 +200,26 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
                 status_code=500, detail=f"could not write the transcript: {exc}"
             ) from exc
         # A split renumbers every later cue, so the reader takes the whole thing back.
+        return {**result, "recording": recording.payload()}
+
+    @app.post("/api/recordings/{recording_id}/cues/{cue_id}/merge")
+    def merge_cues(recording_id: str, cue_id: str, payload: dict = Body(...)) -> dict:
+        """Join a run of captions into one -- undoing a split, or repairing Zoom's."""
+        recording = require(recording_id)
+        try:
+            result = apply_cue_merge(
+                recording,
+                cue_id,
+                payload.get("through") or cue_id,
+                payload.get("expect"),
+            )
+        except EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"could not write the transcript: {exc}"
+            ) from exc
+        # A join renumbers every later cue, so the reader takes the whole thing back.
         return {**result, "recording": recording.payload()}
 
     @app.patch("/api/recordings/{recording_id}/cues/{cue_id}/speaker")

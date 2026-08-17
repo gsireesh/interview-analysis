@@ -5,7 +5,7 @@ const ORDER = ["auto", "light", "dark"];
 
 //: How long a message stays. A warning outlives a confirmation, because one is
 //: something to act on and the other is something to notice.
-const LINGER = { info: 5000, warn: 11000 };
+const LINGER = { info: 5000, warn: 11000, action: 15000 };
 
 export function applyStoredTheme() {
   document.documentElement.dataset.theme = localStorage.getItem(THEME_KEY) || "auto";
@@ -30,8 +30,13 @@ export function bindThemeToggle(button) {
  *
  * ``key`` marks a message worth showing once ever: it stays until dismissed, and
  * dismissing it is remembered. Everything else fades on its own.
+ *
+ * ``action`` puts one button in the toast -- ``{ label, onAct }``. This is where an
+ * undo belongs: the moment after doing something is when you know you did not mean
+ * it, and a toast is already on screen saying what happened. A toast with an action
+ * lingers longer, because dismissing it is the same as declining.
  */
-export function notify(host, message, { kind = "info", key = null } = {}) {
+export function notify(host, message, { kind = "info", key = null, action = null } = {}) {
   if (!host || (key && localStorage.getItem(key) === "dismissed")) return;
 
   const toast = document.createElement("div");
@@ -40,6 +45,7 @@ export function notify(host, message, { kind = "info", key = null } = {}) {
   toast.innerHTML =
     `<span class="toast__mark" aria-hidden="true"></span>` +
     `<span class="toast__text"></span>` +
+    (action ? `<button class="toast__act" type="button"></button>` : "") +
     `<button class="toast__close" type="button" aria-label="Dismiss">✕</button>`;
   toast.querySelector(".toast__text").textContent = message;
 
@@ -50,9 +56,21 @@ export function notify(host, message, { kind = "info", key = null } = {}) {
   };
   toast.querySelector(".toast__close").addEventListener("click", close);
 
+  if (action) {
+    const button = toast.querySelector(".toast__act");
+    button.textContent = action.label;
+    button.addEventListener("click", () => {
+      // One press only: an undo pressed twice would work on whatever the first
+      // press left behind.
+      button.disabled = true;
+      close();
+      action.onAct();
+    });
+  }
+
   host.appendChild(toast);
   if (!key) {
-    const timer = setTimeout(close, LINGER[kind] || LINGER.info);
+    const timer = setTimeout(close, action ? LINGER.action : LINGER[kind] || LINGER.info);
     // Reading a message should not race a timer.
     toast.addEventListener("mouseenter", () => clearTimeout(timer));
   }

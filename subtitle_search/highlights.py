@@ -315,32 +315,22 @@ class HighlightStore:
             self._write()
         return touched
 
-    def remap_split(
-        self, split_index: int, split_offset: int, head_len: int, tail_lead: int
-    ) -> list[dict]:
-        """Re-anchor quotes after one cue became two.
+    def _remap(self, move) -> list[dict]:
+        """Re-anchor every quote through ``move``, then re-resolve what changed.
 
-        Splitting inserts a cue, and cue ids are positional, so every id after
-        the split shifts by one -- without this, a quote saved earlier in the
-        session would silently start pointing at its neighbour. Anchors inside
-        the split cue land in whichever half now contains their words.
+        ``move`` takes ``(cue_id, offset)`` and returns where that anchor now
+        lives. Splitting and merging both renumber the cues after them, and both
+        move anchors that were inside the captions they touched -- only the
+        arithmetic differs.
         """
-        def move(cue_id: str, offset: int) -> tuple[str, int]:
-            if not cue_id.startswith("c") or not cue_id[1:].isdigit():
-                return cue_id, offset
-            index = int(cue_id[1:])
-            if index > split_index:
-                return f"c{index + 1}", offset
-            if index < split_index:
-                return cue_id, offset
-            if offset < split_offset:
-                return cue_id, min(offset, head_len)
-            return f"c{split_index + 1}", max(0, offset - split_offset - tail_lead)
-
         touched: list[dict] = []
         for highlight in self._data["highlights"]:
-            start = move(highlight.get("start_cue_id", ""), int(highlight.get("start_char_offset") or 0))
-            end = move(highlight.get("end_cue_id", ""), int(highlight.get("end_char_offset") or 0))
+            start = move(
+                highlight.get("start_cue_id", ""), int(highlight.get("start_char_offset") or 0)
+            )
+            end = move(
+                highlight.get("end_cue_id", ""), int(highlight.get("end_char_offset") or 0)
+            )
             if (start[0], start[1], end[0], end[1]) == (
                 highlight.get("start_cue_id"),
                 highlight.get("start_char_offset"),
@@ -366,6 +356,54 @@ class HighlightStore:
 
         self._write()
         return touched
+
+    def remap_split(
+        self, split_index: int, split_offset: int, head_len: int, tail_lead: int
+    ) -> list[dict]:
+        """Re-anchor quotes after one cue became two.
+
+        Splitting inserts a cue, and cue ids are positional, so every id after
+        the split shifts by one -- without this, a quote saved earlier in the
+        session would silently start pointing at its neighbour. Anchors inside
+        the split cue land in whichever half now contains their words.
+        """
+        def move(cue_id: str, offset: int) -> tuple[str, int]:
+            if not cue_id.startswith("c") or not cue_id[1:].isdigit():
+                return cue_id, offset
+            index = int(cue_id[1:])
+            if index > split_index:
+                return f"c{index + 1}", offset
+            if index < split_index:
+                return cue_id, offset
+            if offset < split_offset:
+                return cue_id, min(offset, head_len)
+            return f"c{split_index + 1}", max(0, offset - split_offset - tail_lead)
+
+        return self._remap(move)
+
+    def remap_merge(
+        self, first_index: int, starts: list[int], lengths: list[int]
+    ) -> list[dict]:
+        """Re-anchor quotes after a run of cues became one.
+
+        The mirror of a split: ids after the run shift *down* by however many cues
+        disappeared, and an anchor inside any of the absorbed captions moves to
+        where that caption's words now sit inside the joined text.
+        """
+        count = len(starts)
+
+        def move(cue_id: str, offset: int) -> tuple[str, int]:
+            if not cue_id.startswith("c") or not cue_id[1:].isdigit():
+                return cue_id, offset
+            index = int(cue_id[1:])
+            if index < first_index:
+                return cue_id, offset
+            if index >= first_index + count:
+                return f"c{index - (count - 1)}", offset
+            position = index - first_index
+            return f"c{first_index}", starts[position] + min(max(offset, 0), lengths[position])
+
+        return self._remap(move)
 
     def restamp(self) -> None:
         """Record the transcript's new digest after an edit, so it reads as current."""

@@ -5,6 +5,7 @@ import pytest
 from subtitle_search.editing import (
     EditError,
     apply_cue_edit,
+    apply_cue_merge,
     apply_cue_split,
     apply_speaker_edit,
     backup_path,
@@ -642,3 +643,169 @@ def test_a_split_in_a_later_part_writes_that_file_own_timeline(tmp_path):
     reread = open_recording(tmp_path)
     halves = [c for c in reread.transcript.cues if c.part_index == 1]
     assert [round(c.start, 3) for c in halves] == [cue.start, round(cue.start + 5.098, 3)]
+
+
+# -- putting captions back together -------------------------------------
+
+# Zoom's other failure: one sentence across three captions, so a quote that
+# reads as a single thought is three anchors underneath.
+CHOPPED = """WEBVTT
+
+1
+00:00:00.000 --> 00:00:02.000
+Dana Whitfield: One sentence
+
+2
+00:00:02.000 --> 00:00:04.000
+Dana Whitfield: chopped across
+
+3
+00:00:04.000 --> 00:00:06.500
+Dana Whitfield: three captions.
+
+4
+00:00:07.000 --> 00:00:09.000
+Rafael Ortiz: And then a reply.
+"""
+
+
+@pytest.fixture
+def chopped(tmp_path):
+    (tmp_path / "meeting.vtt").write_text(CHOPPED, encoding="utf-8")
+    write_mp4(tmp_path / "meeting.mp4", 30)
+    return open_recording(tmp_path)
+
+
+def test_a_run_of_captions_becomes_one(chopped):
+    result = apply_cue_merge(chopped, "c0", "c2")
+    assert result["joined"] == 3
+    assert result["cue_id"] == "c0"
+    assert [cue.text for cue in chopped.transcript.cues] == [
+        "One sentence chopped across three captions.",
+        "And then a reply.",
+    ]
+
+
+def test_the_joined_caption_spans_the_whole_run(chopped):
+    apply_cue_merge(chopped, "c0", "c2")
+    joined = chopped.transcript.cue("c0")
+    assert (joined.start, joined.end) == (0.0, 6.5)
+
+
+def test_joining_leaves_the_other_captions_alone(chopped):
+    apply_cue_merge(chopped, "c0", "c2")
+    written = (chopped.folder / "meeting.vtt").read_text()
+    # The surviving block keeps its identifier; the absorbed ones lose theirs.
+    assert "1\n00:00:00.000 --> 00:00:06.500" in written
+    assert "4\n00:00:07.000 --> 00:00:09.000\nRafael Ortiz: And then a reply." in written
+    assert "\n2\n" not in written and "\n3\n" not in written
+
+
+def test_a_reversed_range_joins_the_same_way(chopped):
+    assert apply_cue_merge(chopped, "c2", "c0")["joined"] == 3
+
+
+def test_joining_one_caption_to_itself_is_rejected(chopped):
+    with pytest.raises(EditError):
+        apply_cue_merge(chopped, "c1", "c1")
+
+
+def test_joining_an_unknown_caption_is_rejected(chopped):
+    with pytest.raises(EditError):
+        apply_cue_merge(chopped, "c0", "c99")
+
+
+def test_joining_backs_up_the_original_first(chopped):
+    assert apply_cue_merge(chopped, "c0", "c1")["backup_created"] == "meeting_original.vtt"
+    assert backup_path(chopped.folder / "meeting.vtt").read_text() == CHOPPED
+
+
+def test_joining_across_recordings_is_rejected(tmp_path):
+    (tmp_path / "GMT20240301-140000_Recording.vtt").write_text(EDITABLE)
+    write_mp4(tmp_path / "GMT20240301-140000_Recording.mp4", 60)
+    (tmp_path / "GMT20240301-141200_Recording.vtt").write_text(
+        "WEBVTT\n\n1\n00:00:01.000 --> 00:00:05.000\nRafael Ortiz: Second recording.\n"
+    )
+    write_mp4(tmp_path / "GMT20240301-141200_Recording.mp4", 30)
+    recording = open_recording(tmp_path)
+    last_of_first = [c for c in recording.transcript.cues if c.part_index == 0][-1]
+    first_of_second = [c for c in recording.transcript.cues if c.part_index == 1][0]
+
+    with pytest.raises(EditError, match="two different recordings"):
+        apply_cue_merge(recording, last_of_first.id, first_of_second.id)
+
+
+def test_the_first_speaker_survives_and_the_rest_are_reported(chopped):
+    """One caption carries one label, so a join across two of them drops a name."""
+    apply_speaker_edit(chopped, "c1", "Rafael Ortiz")
+    result = apply_cue_merge(chopped, "c0", "c1")
+
+    assert result["speaker"] == "Dana Whitfield"
+    assert result["absorbed_speakers"] == ["Rafael Ortiz"]
+    assert chopped.transcript.cue("c0").speaker == "Dana Whitfield"
+
+
+# -- undo, and the guard that makes it safe -----------------------------
+
+
+def test_a_split_can_be_undone(intermingled):
+    before = [cue.text for cue in intermingled.transcript.cues]
+    cue = intermingled.transcript.cue("c1")
+    split = apply_cue_split(intermingled, "c1", cue.text.index("Sure"), align=False)
+
+    apply_cue_merge(intermingled, *split["cue_ids"], expect=split["halves"])
+    assert [cue.text for cue in intermingled.transcript.cues] == before
+
+
+def test_undo_refuses_once_the_transcript_has_moved(intermingled):
+    """Cue ids are positional, so an undo pressed late must not join the wrong two."""
+    cue = intermingled.transcript.cue("c1")
+    split = apply_cue_split(intermingled, "c1", cue.text.index("Sure"), align=False)
+    # Something else happened in between.
+    apply_cue_edit(intermingled, "c1", "So walk me through it, would you.")
+
+    with pytest.raises(EditError, match="has changed since then"):
+        apply_cue_merge(intermingled, *split["cue_ids"], expect=split["halves"])
+    # And nothing was joined.
+    assert len(intermingled.transcript.cues) == 4
+
+
+def test_an_expectation_that_matches_is_honoured(chopped):
+    apply_cue_merge(chopped, "c0", "c1", expect=["One sentence", "chopped across"])
+    assert chopped.transcript.cue("c0").text == "One sentence chopped across"
+
+
+# -- quotes surviving a join --------------------------------------------
+
+
+def test_a_quote_inside_an_absorbed_caption_follows_its_words(chopped):
+    quote = _quote(chopped, "c1", 0, len("chopped"))
+    assert quote["text"] == "chopped"
+
+    apply_cue_merge(chopped, "c0", "c2")
+    assert quote["start_cue_id"] == "c0"
+    assert quote["text"] == "chopped"
+    joined = chopped.transcript.cue("c0")
+    assert joined.text[quote["start_char_offset"] : quote["end_char_offset"]] == "chopped"
+
+
+def test_a_quote_spanning_the_run_still_covers_the_same_words(chopped):
+    quote = chopped.store.create(
+        {
+            "text": "sentence chopped across three",
+            "start_cue_id": "c0",
+            "start_char_offset": 4,
+            "end_cue_id": "c2",
+            "end_char_offset": 5,
+        }
+    )
+    apply_cue_merge(chopped, "c0", "c2")
+    assert (quote["start_cue_id"], quote["end_cue_id"]) == ("c0", "c0")
+    assert quote["text"] == "sentence chopped across three"
+
+
+def test_a_quote_after_the_run_shifts_back(chopped):
+    quote = _quote(chopped, "c3", 0, len("And then"))
+    apply_cue_merge(chopped, "c0", "c2")
+    assert quote["start_cue_id"] == "c1"
+    assert quote["text"] == "And then"

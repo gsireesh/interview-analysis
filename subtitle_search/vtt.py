@@ -607,6 +607,55 @@ def split_cue_block(
     return content[: cue.timing_start] + replacement + content[cue.source_end :]
 
 
+def merged_payload(cues: list[Cue]) -> tuple[str, list[int], list[int]]:
+    """The text a merge produces, and where each cue's words land inside it.
+
+    Returns the joined text, the offset at which each cue's contribution begins,
+    and how long each contribution is. The offsets are what re-anchor a quote that
+    was pointing inside one of the captions being absorbed, and they come from here
+    rather than being recomputed by the caller so the two can never disagree about
+    where a word ended up.
+    """
+    merged = ""
+    starts: list[int] = []
+    lengths: list[int] = []
+    for cue in cues:
+        piece = _clean(cue.text)
+        if merged and piece:
+            merged += " "
+        starts.append(len(merged))
+        lengths.append(len(piece))
+        merged += piece
+    return merged, starts, lengths
+
+
+def merge_cue_blocks(content: str, cues: list[Cue], base: float = 0.0) -> str:
+    """Turn a run of consecutive cues into one, spanning from the first to the last.
+
+    The counterpart to :func:`split_cue_block`, and the fix for Zoom's other
+    segmentation failure: one sentence chopped across three captions, so a quote
+    that reads as a single thought is three separate anchors underneath.
+
+    Everything from the first cue's timing line to the last one's payload is
+    replaced, which takes the intervening cue identifiers and timing lines with
+    it. The surviving block keeps the first cue's identifier -- it sits before the
+    timing line, outside the replaced span -- so the file is not renumbered.
+
+    The words are joined in order with single spaces, so the *sequence* of words in
+    the file is unchanged. That is what lets measured word timings survive a merge
+    without being remapped, exactly as they survive a split.
+    """
+    if not cues:
+        return content
+    first, last = cues[0], cues[-1]
+    text, _, _ = merged_payload(cues)
+    replacement = (
+        f"{vtt_timestamp(first.start - base)} --> {vtt_timestamp(last.end - base)}\n"
+        f"{first.prefix}{text}{first.suffix}"
+    )
+    return content[: first.timing_start] + replacement + content[last.source_end :]
+
+
 def splice_payload(content: str, cue: Cue, prefix: str, text: str, suffix: str) -> str:
     """Rewrite one cue's payload, leaving every other byte as it was."""
     return content[: cue.source_start] + f"{prefix}{text}{suffix}" + content[cue.source_end :]

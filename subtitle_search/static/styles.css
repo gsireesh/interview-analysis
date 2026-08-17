@@ -307,6 +307,24 @@ body:not(.page) .notices { bottom: 4.75rem; }
 
 .toast__close:hover { color: var(--ink); }
 
+/* The one thing in a toast worth pressing, so it reads as a button rather than
+   as more text. Undo lives here. */
+.toast__act {
+  flex: 0 0 auto;
+  background: none;
+  border: 1px solid var(--rule-strong, var(--rule));
+  border-radius: 3px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.6875rem;
+  padding: 0.1rem 0.4rem;
+  white-space: nowrap;
+}
+
+.toast__act:hover { border-color: var(--marker); color: var(--marker); }
+.toast__act:disabled { opacity: 0.5; cursor: default; }
+
 @media (prefers-reduced-motion: no-preference) {
   .toast { animation: toast-in 180ms cubic-bezier(0.22, 1, 0.36, 1); }
   .toast--going { opacity: 0; transform: translateY(4px); transition: opacity 160ms, transform 160ms; }

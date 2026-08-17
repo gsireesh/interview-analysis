@@ -7,7 +7,12 @@ having them be tested without half a gigabyte of weights.
 
 import pytest
 
-from subtitle_search.editing import apply_cue_edit, apply_cue_split, apply_speaker_edit
+from subtitle_search.editing import (
+    apply_cue_edit,
+    apply_cue_merge,
+    apply_cue_split,
+    apply_speaker_edit,
+)
 from subtitle_search.session import open_recording
 from subtitle_search.timings import (
     WORDS_FILENAME,
@@ -255,3 +260,37 @@ def test_the_word_index_space_counts_every_word(folder):
     recording = open_recording(folder)
     assert len(split_words(recording.transcript.cue("c0").text)) == 5
     assert len(split_words(recording.transcript.cue("c1").text)) == 10
+
+
+def test_timings_survive_a_join_untouched(timed):
+    """Joining leaves the word sequence identical, so nothing needs remapping."""
+    apply_cue_merge(timed, "c0", "c1")
+
+    reread = open_recording(timed.folder)
+    joined = reread.transcript.cue("c0")
+    assert joined.text == "Thanks for making the time. So walk me through it. Sure, I read it first."
+    # The second caption's words were never measured against c0's five words, and
+    # the measurements are addressed by position, so they land where they belong.
+    assert joined.time_at_offset(joined.text.index("Sure")) == pytest.approx(8.0)
+    assert joined.time_at_offset(joined.text.index("walk")) == pytest.approx(4.5)
+
+
+def test_a_split_then_undo_leaves_the_timings_where_they_started(timed):
+    cue = timed.transcript.cue("c1")
+    was = [cue.time_at_offset(o) for o in (0, 10, 30)]
+    split = apply_cue_split(timed, "c1", cue.text.index("Sure"), align=False)
+    apply_cue_merge(timed, *split["cue_ids"], expect=split["halves"])
+
+    restored = open_recording(timed.folder).transcript.cue("c1")
+    assert restored.text == cue.text
+    assert [restored.time_at_offset(o) for o in (0, 10, 30)] == pytest.approx(was)
+
+
+def test_a_join_restores_the_original_span(timed):
+    """Undo puts the caption's own start and end back, not the halves'."""
+    cue = timed.transcript.cue("c1")
+    split = apply_cue_split(timed, "c1", cue.text.index("Sure"), align=False)
+    apply_cue_merge(timed, *split["cue_ids"], expect=split["halves"])
+
+    restored = open_recording(timed.folder).transcript.cue("c1")
+    assert (restored.start, restored.end) == (cue.start, cue.end)
