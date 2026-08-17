@@ -87,9 +87,16 @@ marker says which part is starting but not how long the gap was.
 
 ## Your recordings stay put
 
-The server binds to `127.0.0.1` only and makes no outbound requests. There are no
-CDN assets, web fonts, or analytics — the page is drawn entirely with fonts
-already on your machine. Nothing is uploaded anywhere.
+The rule is about your data, not about your dependencies. **Nothing from a
+recording — audio, transcript, quotes, notes, tags — is ever sent anywhere.** The
+server binds to `127.0.0.1` only, and the page has no CDN assets, web fonts, or
+analytics, so it is drawn entirely with fonts already on your machine and nothing
+about what you are reading is observable off it.
+
+Downloads in the other direction are fine and are a normal install step: the
+`neural` similarity backend fetches a sentence-transformer model once, then runs
+it in this process. Inbound and local — the model comes to the quotes, never the
+other way round.
 
 ## Reading
 
