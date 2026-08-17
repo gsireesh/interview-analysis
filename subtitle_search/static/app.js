@@ -69,6 +69,7 @@ const ctx = {
     quotebarColors: $("quotebar-colors"),
     quotebarNote: $("quotebar-note"),
     quotebarCopy: $("quotebar-copy"),
+    quotebarHand: $("quotebar-hand"),
   },
   mode: "reading",
   cursorIndex: 0,

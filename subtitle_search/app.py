@@ -20,6 +20,7 @@ from .editing import (
     apply_cue_merge,
     apply_cue_split,
     apply_roster_edit,
+    apply_selection_speaker,
     apply_speaker_edit,
 )
 from .alignment import AlignmentError
@@ -246,6 +247,28 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
                 status_code=500, detail=f"could not write the transcript: {exc}"
             ) from exc
         # A join renumbers every later cue, so the reader takes the whole thing back.
+        return {**result, "recording": recording.payload()}
+
+    @app.post("/api/recordings/{recording_id}/selection/speaker")
+    def reattribute_selection(recording_id: str, payload: dict = Body(...)) -> dict:
+        """Hand a selected passage to another speaker, cutting captions to fit it."""
+        recording = require(recording_id)
+        try:
+            result = apply_selection_speaker(
+                recording,
+                payload.get("start_cue_id", ""),
+                int(payload.get("start_char_offset") or 0),
+                payload.get("end_cue_id", ""),
+                int(payload.get("end_char_offset") or 0),
+                payload.get("speaker", ""),
+            )
+        except EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"could not write the transcript: {exc}"
+            ) from exc
+        # Cutting and regrouping changes every block, so the reader takes it back.
         return {**result, "recording": recording.payload()}
 
     @app.patch("/api/recordings/{recording_id}/cues/{cue_id}/speaker")

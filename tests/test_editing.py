@@ -7,6 +7,7 @@ from subtitle_search.editing import (
     apply_cue_edit,
     apply_cue_merge,
     apply_cue_split,
+    apply_selection_speaker,
     apply_speaker_edit,
     backup_path,
     remap_offset,
@@ -809,3 +810,138 @@ def test_a_quote_after_the_run_shifts_back(chopped):
     apply_cue_merge(chopped, "c0", "c2")
     assert quote["start_cue_id"] == "c1"
     assert quote["text"] == "And then"
+
+
+# -- handing a selected passage to another speaker -----------------------
+
+
+def _hand_over(recording, cue_id, phrase, speaker="Rafael Ortiz", through=None):
+    cue = recording.transcript.cue(cue_id)
+    start = cue.text.index(phrase)
+    end_cue = recording.transcript.cue(through or cue_id)
+    return apply_selection_speaker(
+        recording,
+        cue_id,
+        start,
+        end_cue.id,
+        (end_cue.text.index(phrase) + len(phrase)) if through is None else len(end_cue.text),
+        speaker,
+    )
+
+
+def test_a_passage_mid_caption_becomes_its_own_caption(intermingled):
+    """One caption into three: what came before, the passage, what came after."""
+    result = _hand_over(intermingled, "c1", "Sure, I read the whole thing first.")
+
+    assert result["splits"] == 1  # the passage runs to the end, so only one cut
+    assert [cue.text for cue in intermingled.transcript.cues] == [
+        "Thanks for making the time.",
+        "So walk me through it.",
+        "Sure, I read the whole thing first.",
+        "And what breaks down there?",
+    ]
+    assert intermingled.transcript.cue("c2").speaker == "Rafael Ortiz"
+    assert intermingled.transcript.cue("c1").speaker == "Dana Whitfield"
+
+
+def test_a_passage_with_words_on_both_sides_is_cut_out(intermingled):
+    result = _hand_over(intermingled, "c1", "Sure, I read")
+
+    assert result["splits"] == 2
+    assert [cue.text for cue in intermingled.transcript.cues] == [
+        "Thanks for making the time.",
+        "So walk me through it.",
+        "Sure, I read",
+        "the whole thing first.",
+        "And what breaks down there?",
+    ]
+    assert intermingled.transcript.cue("c2").speaker == "Rafael Ortiz"
+    # And the words either side stay with whoever had them.
+    assert intermingled.transcript.cue("c1").speaker == "Dana Whitfield"
+    assert intermingled.transcript.cue("c3").speaker == "Dana Whitfield"
+
+
+def test_a_selection_covering_a_whole_caption_needs_no_cut(intermingled):
+    cue = intermingled.transcript.cue("c0")
+    result = apply_selection_speaker(intermingled, "c0", 0, "c0", len(cue.text), "Rafael Ortiz")
+
+    assert result["splits"] == 0
+    assert len(intermingled.transcript.cues) == 3
+    assert intermingled.transcript.cue("c0").speaker == "Rafael Ortiz"
+
+
+def test_a_selection_spanning_captions_takes_them_all(intermingled):
+    first = intermingled.transcript.cue("c1")
+    result = apply_selection_speaker(
+        intermingled,
+        "c1",
+        first.text.index("Sure"),
+        "c2",
+        len(intermingled.transcript.cue("c2").text),
+        "Rafael Ortiz",
+    )
+
+    assert result["splits"] == 1
+    assert [cue.speaker for cue in intermingled.transcript.cues] == [
+        "Dana Whitfield",
+        "Dana Whitfield",
+        "Rafael Ortiz",
+        "Rafael Ortiz",
+    ]
+
+
+def test_a_selection_starting_mid_word_takes_the_whole_word(intermingled):
+    """A caption boundary inside a word would leave two fragments."""
+    cue = intermingled.transcript.cue("c1")
+    at = cue.text.index("Sure")
+    apply_selection_speaker(intermingled, "c1", at + 2, "c1", len(cue.text), "Rafael Ortiz")
+
+    assert intermingled.transcript.cue("c2").text.startswith("Sure,")
+
+
+def test_an_empty_selection_is_rejected(intermingled):
+    with pytest.raises(EditError):
+        apply_selection_speaker(intermingled, "c1", 5, "c1", 5, "Rafael Ortiz")
+
+
+def test_handing_over_without_a_name_is_rejected(intermingled):
+    cue = intermingled.transcript.cue("c1")
+    with pytest.raises(EditError, match="who said it"):
+        apply_selection_speaker(intermingled, "c1", cue.text.index("Sure"), "c1", len(cue.text), "  ")
+
+
+def test_handing_over_backs_up_the_original_first(intermingled):
+    result = _hand_over(intermingled, "c1", "Sure, I read the whole thing first.")
+    assert result["backup_created"] == "meeting_original.vtt"
+    assert backup_path(intermingled.folder / "meeting.vtt").read_text() == INTERMINGLED
+
+
+def test_a_quote_in_the_handed_over_passage_keeps_its_words(intermingled):
+    cue = intermingled.transcript.cue("c1")
+    start = cue.text.index("read the whole thing")
+    quote = _quote(intermingled, "c1", start, start + len("read the whole thing"))
+
+    _hand_over(intermingled, "c1", "Sure, I read the whole thing first.")
+    assert quote["text"] == "read the whole thing"
+    assert quote["start_cue_id"] == "c2"
+    assert quote["speaker"] == "Rafael Ortiz"
+
+
+def test_reassigning_a_caption_recredits_its_quotes(one_voice):
+    """A misattributed quote is the one error here that could end up published."""
+    quote = _quote(one_voice, "c1", 0, 8)
+    assert quote["speaker"] == "Dana Whitfield"
+
+    result = apply_speaker_edit(one_voice, "c1", "Rafael Ortiz")
+    assert [h["id"] for h in result["highlights"]] == [quote["id"]]
+    assert quote["speaker"] == "Rafael Ortiz"
+
+    # And it is on disk, not just in memory.
+    reread = open_recording(one_voice.folder)
+    assert reread.store.list()[0]["speaker"] == "Rafael Ortiz"
+
+
+def test_quotes_in_other_captions_keep_their_speaker(one_voice):
+    elsewhere = _quote(one_voice, "c3", 0, 7)
+    apply_speaker_edit(one_voice, "c1", "Rafael Ortiz")
+    assert elsewhere["speaker"] == "Dana Whitfield"

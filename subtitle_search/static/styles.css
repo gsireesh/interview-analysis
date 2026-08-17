@@ -1092,6 +1092,48 @@ mark.hl--noted::after {
 
 .quotebar__action:hover { color: var(--ink); }
 
+/* Handing a passage to whoever actually said it. Sits at the end of the bar,
+   after the quote actions, because it edits the transcript rather than reading
+   from it -- a different kind of act from saving a quote. */
+.quotebar__hand {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding-left: 0.625rem;
+  border-left: 1px solid var(--rule);
+}
+
+.quotebar__lead {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-faint);
+}
+
+.quotebar__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink-soft);
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.05rem 0.35rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quotebar__who:hover { color: var(--marker); border-color: var(--marker); }
+
+.quotebar__who kbd {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+}
+
 /* ------------------------------------------------------------ responsive -- */
 
 @media (max-width: 60rem) {

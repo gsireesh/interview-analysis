@@ -5,7 +5,13 @@
  */
 
 import { api, escapeHtml, formatTime } from "./util.js";
-import { applyHighlights, flashCue, scrollToChunk, selectionAnchors } from "./transcript.js";
+import {
+  applyHighlights,
+  flashCue,
+  scrollToChunk,
+  selectionAnchors,
+  setCursor,
+} from "./transcript.js";
 import { seekAndPlay } from "./player.js";
 import { mountTagFields } from "./tagfield.js";
 
@@ -45,6 +51,89 @@ function bindQuoteBar(ctx) {
 
   ctx.el.quotebarNote.addEventListener("click", () => save(ctx, { focusNote: true }));
   ctx.el.quotebarCopy.addEventListener("click", () => copySelection(ctx));
+
+  ctx.el.quotebarHand.addEventListener("click", (event) => {
+    const who = event.target.closest("[data-hand-to]");
+    if (who) handOverSelection(ctx, who.dataset.handTo);
+  });
+}
+
+/** The speakers a selection can be handed to: the roster, then whoever else the
+ *  transcript names. Nothing to offer means no roster and no labels yet. */
+function handCandidates(ctx) {
+  const names = (ctx.data?.transcript?.roster || []).map((entry) => entry.name);
+  for (const name of ctx.data?.transcript?.speakers || []) {
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Offer to hand the selected words to someone else.
+ *
+ * Reading along, you see that half of what Zoom filed under one person was
+ * actually said by the other. This is where that gets fixed: select the words and
+ * hand them over. Whatever captions have to be cut to make the passage its own
+ * are cut -- usually one caption into three.
+ *
+ * Only the speaker the passage is *not* currently credited to is offered, because
+ * handing a passage to whoever already has it does nothing.
+ */
+function renderHandOver(ctx, anchors) {
+  const candidates = handCandidates(ctx).filter((name) => name !== anchors.speaker);
+  ctx.el.quotebarHand.hidden = candidates.length === 0;
+  if (!candidates.length) return;
+
+  const roster = ctx.data?.transcript?.roster || [];
+  ctx.el.quotebarHand.innerHTML =
+    `<span class="quotebar__lead">said by</span>` +
+    candidates
+      .map((name) => {
+        const key = roster.find((entry) => entry.name === name)?.key;
+        return `<button class="quotebar__who" type="button" data-hand-to="${escapeAttr(name)}"
+                        title="These words were said by ${escapeAttr(name)}">${
+          key ? `<kbd>${escapeAttr(key)}</kbd>` : ""
+        }${escapeHtml(name)}</button>`;
+      })
+      .join("");
+}
+
+const escapeAttr = (value) => String(value).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function handOverSelection(ctx, speaker) {
+  const anchors = ctx.pendingSelection || selectionAnchors(ctx);
+  if (!anchors) return;
+
+  window.getSelection()?.removeAllRanges();
+  hideQuoteBar(ctx);
+  try {
+    const result = await api(`/api/recordings/${ctx.recordingId}/selection/speaker`, {
+      method: "POST",
+      body: {
+        start_cue_id: anchors.start_cue_id,
+        start_char_offset: anchors.start_char_offset,
+        end_cue_id: anchors.end_cue_id,
+        end_char_offset: anchors.end_char_offset,
+        speaker,
+      },
+    });
+    if (result.backup_created) {
+      ctx.notify(`Original transcript saved as ${result.backup_created}.`);
+    }
+    const cuts = result.splits
+      ? `, cutting ${result.splits} caption${result.splits === 1 ? "" : "s"}`
+      : "";
+    ctx.notify(`Given to ${result.speaker}${cuts}.`);
+    ctx.onTranscriptChanged?.(result.recording);
+    const landed = ctx.chunks.findIndex((c) => c.cue_ids.includes(result.cue_ids[0]));
+    if (landed >= 0) setCursor(ctx, landed, { scroll: true });
+  } catch (error) {
+    ctx.notify(`Could not hand those words over: ${error.message}`, {
+      kind: "warn",
+      key: null,
+    });
+  }
 }
 
 function refreshQuoteBar(ctx) {
@@ -58,6 +147,7 @@ function refreshQuoteBar(ctx) {
   }
 
   ctx.el.quotebarTime.textContent = `→ ${formatTime(anchors.estimated_start)}`;
+  renderHandOver(ctx, anchors);
   bar.hidden = false;
 
   const rect = anchors.rect;

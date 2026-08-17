@@ -405,6 +405,29 @@ class HighlightStore:
 
         return self._remap(move)
 
+    def restate_speaker(self, cue_ids, speaker: str | None) -> list[dict]:
+        """Say who said the quotes anchored in a run of reattributed captions.
+
+        A quote stores its speaker, because that is what gets copied out and read
+        in the sidebar months later. Reattributing the captions underneath it has
+        to carry through, or the quote goes on crediting the wrong person -- and a
+        misattributed quote is the one error in this tool that could end up in
+        something published.
+        """
+        wanted = set(cue_ids)
+        touched: list[dict] = []
+        for highlight in self._data["highlights"]:
+            if highlight.get("start_cue_id") not in wanted:
+                continue
+            if highlight.get("speaker") == speaker:
+                continue
+            highlight["speaker"] = speaker
+            highlight["updated_at"] = _now()
+            touched.append(highlight)
+        if touched:
+            self._write()
+        return touched
+
     def restamp(self) -> None:
         """Record the transcript's new digest after an edit, so it reads as current."""
         self._write()

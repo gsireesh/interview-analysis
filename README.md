@@ -201,6 +201,35 @@ the transcript byte for byte. Undo carries the two halves *as written*, so if
 anything else moved the captions in between it refuses rather than joining
 whichever two now hold those numbers.
 
+### Handing a passage to whoever said it
+
+The commonest version of this problem while *reading* rather than editing: half of
+what Zoom filed under one person was plainly said by the other, and you can see
+exactly which words.
+
+Select them. The quote bar that appears offers **said by** and the speakers it
+knows about — the roster first, then anyone else the transcript names — and picking
+one hands those words over. Whatever captions have to be cut for the passage to be
+its own are cut, which is usually one caption into three: what came before, the
+passage, and what came after. Only the speakers the passage is *not* already
+credited to are offered, since handing it to whoever has it does nothing.
+
+A selection that starts or ends mid-word takes the whole word with it, because a
+caption boundary inside a word leaves two fragments. The cuts are measured cuts
+like any other, so the new caption starts on its first word rather than in the
+tail of somebody else's sentence.
+
+The speakers on offer come from the roster and the transcript's own labels, so a
+transcript with neither has nothing to offer yet — name someone with **+ Speaker**
+in the strip under the header first.
+
+**Quotes are recredited, not just re-anchored.** A quote inside the passage follows
+its words *and* changes hands, because a quote stores who said it and that is what
+gets copied out and read months later. A misattributed quote is the one error here
+that could end up in something published, so reattributing captions carries through
+to every quote anchored in them — including from the speaker field in edit mode and
+the speaker keys, which had been leaving quotes crediting the wrong person.
+
 ### Joining captions back together
 
 Zoom's opposite failure is chopping one sentence across three captions, so a quote

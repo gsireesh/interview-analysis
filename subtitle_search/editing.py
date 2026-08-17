@@ -265,6 +265,112 @@ def apply_cue_split(
     }
 
 
+def snap_to_words(text: str, start: int, end: int) -> tuple[int, int]:
+    """Widen a span to whole words.
+
+    A caption boundary inside a word leaves two fragments, so a selection that
+    began or ended mid-word takes the whole word with it. A selection already on
+    word edges is left exactly where it is.
+    """
+    start = max(0, min(start, len(text)))
+    end = max(start, min(end, len(text)))
+    while start > 0 and not text[start - 1].isspace():
+        start -= 1
+    while end < len(text) and not text[end].isspace():
+        end += 1
+    return start, end
+
+
+def apply_selection_speaker(
+    recording,
+    start_cue_id: str,
+    start_offset: int,
+    end_cue_id: str,
+    end_offset: int,
+    speaker: str,
+) -> dict:
+    """Give a selected passage to a different speaker, cutting captions to fit it.
+
+    The gesture this serves: reading along, you see that half of what Zoom filed
+    under one person was actually said by the other. Select those words and hand
+    them over. Whatever captions have to be divided to make that possible are
+    divided, which is usually one caption into three -- what came before, the
+    passage itself, and what came after.
+
+    Built out of the two existing operations rather than a third way of editing the
+    file, so a selection handed over gets the same backup, the same re-anchored
+    quotes, and the same measured caption boundaries as a cut made by hand.
+    """
+    transcript = recording.transcript
+    first = transcript.cue(start_cue_id)
+    last = transcript.cue(end_cue_id)
+    if first is None or last is None:
+        raise EditError("that selection is not part of this transcript")
+    if first.index > last.index:
+        first, last = last, first
+        start_offset, end_offset = end_offset, start_offset
+    if first.part_index != last.part_index:
+        raise EditError("a selection spanning two recordings cannot be reattributed")
+
+    speaker = normalize_edit(speaker)
+    if not speaker:
+        raise EditError("choose who said it")
+
+    if first.id == last.id and start_offset == end_offset:
+        raise EditError("select some words to hand over")
+
+    # Snap outward, so no caption is left holding half a word.
+    if first.id == last.id:
+        start_offset, end_offset = snap_to_words(first.text, start_offset, end_offset)
+    else:
+        start_offset, _ = snap_to_words(first.text, start_offset, start_offset)
+        _, end_offset = snap_to_words(last.text, end_offset, end_offset)
+
+    if first.id == last.id and start_offset >= end_offset:
+        raise EditError("select some words to hand over")
+
+    # Only cut where there is something on the other side of the cut to keep.
+    head_split = bool(first.text[:start_offset].strip())
+    tail_split = bool(last.text[end_offset:].strip())
+    before, after = first.index, last.index
+
+    touched: dict[str, dict] = {}
+    backup: str | None = None
+    measured: list[bool] = []
+
+    # The tail first: it inserts a caption after ``last``, which leaves the index
+    # of ``first`` alone. Cutting the head first would move ``last`` underneath us.
+    if tail_split:
+        result = apply_cue_split(recording, f"c{after}", end_offset)
+        backup = backup or result["backup_created"]
+        measured.append(result["measured"])
+        touched.update({h["id"]: h for h in result["highlights"]})
+    if head_split:
+        result = apply_cue_split(recording, f"c{before}", start_offset)
+        backup = backup or result["backup_created"]
+        measured.append(result["measured"])
+        touched.update({h["id"]: h for h in result["highlights"]})
+
+    # A head cut inserts a caption at ``before + 1``, so everything from the
+    # selection onwards has moved along by one.
+    shift = 1 if head_split else 0
+    named = apply_speaker_edit(
+        recording, f"c{before + shift}", speaker, f"c{after + shift}"
+    )
+    touched.update({h["id"]: h for h in named["highlights"]})
+
+    return {
+        "changed": True,
+        "speaker": speaker,
+        "cue_ids": named["cue_ids"],
+        "splits": len(measured),
+        "measured": all(measured) if measured else None,
+        "backup_created": backup or named["backup_created"],
+        "highlights": list(touched.values()),
+        "speakers": recording.transcript.speakers,
+    }
+
+
 #: A guard, not a policy: joining a whole transcript into one caption is never
 #: what anyone meant, and a runaway request should not be silently obeyed.
 MAX_MERGE = 50
@@ -404,12 +510,17 @@ def apply_speaker_edit(
     recording.sources[part_index] = content
     recording.reload_transcript()
 
+    # Quotes anchored in these captions were credited to whoever used to be on
+    # them. Saying who said it has to reach the quotes, not just the transcript.
+    touched = recording.store.restate_speaker([cue.id for cue in targets], speaker)
+
     return {
         "changed": True,
         "speaker": speaker,
         "cue_ids": [cue.id for cue in targets],
         "backup_created": backup_created,
         "backup_file": backup_path(vtt_path).name,
+        "highlights": touched,
         "speakers": recording.transcript.speakers,
     }
 

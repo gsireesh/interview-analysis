@@ -389,3 +389,78 @@ def test_a_reload_picks_up_quotes_written_since(folder, monkeypatch):
     # A second build is what a reload does: same folder, new process, new registry.
     reloaded = TestClient(from_environment())
     assert len(reloaded.get(f"/api/recordings/{rec_id}/highlights").json()["highlights"]) == 1
+
+
+# -- handing a selection to another speaker ------------------------------
+
+
+def test_selection_speaker_route_cuts_and_reattributes(client):
+    api, rec_id = client
+    # c0 is "Cool. And then I will share my screen briefly, to show you a bit of
+    # a demo." -- hand the second sentence to somebody else.
+    text = api.get(f"/api/recordings/{rec_id}").json()["transcript"]["cues"][0]["text"]
+    body = api.post(
+        f"/api/recordings/{rec_id}/selection/speaker",
+        json={
+            "start_cue_id": "c0",
+            "start_char_offset": text.index("And then"),
+            "end_cue_id": "c0",
+            "end_char_offset": len(text),
+            "speaker": "Jordan Reyes",
+        },
+    ).json()
+
+    assert body["splits"] == 1
+    assert body["speaker"] == "Jordan Reyes"
+    cues = body["recording"]["transcript"]["cues"]
+    assert cues[0]["text"] == "Cool."
+    assert cues[0]["speaker"] == "Dana Whitfield"
+    assert cues[1]["speaker"] == "Jordan Reyes"
+    assert "Jordan Reyes" in body["speakers"]
+
+
+def test_selection_speaker_route_needs_a_name(client):
+    api, rec_id = client
+    response = api.post(
+        f"/api/recordings/{rec_id}/selection/speaker",
+        json={
+            "start_cue_id": "c0",
+            "start_char_offset": 0,
+            "end_cue_id": "c0",
+            "end_char_offset": 5,
+            "speaker": "",
+        },
+    )
+    assert response.status_code == 400
+    assert "who said it" in response.json()["detail"]
+
+
+def test_selection_speaker_route_recredits_the_quotes_inside_it(client):
+    api, rec_id = client
+    text = api.get(f"/api/recordings/{rec_id}").json()["transcript"]["cues"][0]["text"]
+    at = text.index("share my screen")
+    quote = api.post(
+        f"/api/recordings/{rec_id}/highlights",
+        json={
+            "text": "share my screen",
+            "start_cue_id": "c0",
+            "start_char_offset": at,
+            "end_cue_id": "c0",
+            "end_char_offset": at + 15,
+        },
+    ).json()["highlight"]
+    assert quote["speaker"] == "Dana Whitfield"
+
+    api.post(
+        f"/api/recordings/{rec_id}/selection/speaker",
+        json={
+            "start_cue_id": "c0",
+            "start_char_offset": text.index("And then"),
+            "end_cue_id": "c0",
+            "end_char_offset": len(text),
+            "speaker": "Jordan Reyes",
+        },
+    )
+    moved = api.get(f"/api/recordings/{rec_id}/highlights").json()["highlights"][0]
+    assert moved["text"] == "share my screen"
+    assert moved["speaker"] == "Jordan Reyes"
