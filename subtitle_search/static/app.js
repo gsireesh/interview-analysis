@@ -309,6 +309,7 @@ async function load() {
 
     try {
       while (!state.stop) {
+        const before = state.done;
         const result = await api(`/api/recordings/${ctx.recordingId}/align`, {
           method: "POST",
           body: {},
@@ -317,8 +318,17 @@ async function load() {
         state.total = result.coverage.total;
         ctx.data.timing_coverage = result.coverage;
         ctx.renderTiming();
-        // A batch that measured nothing would otherwise spin forever.
         if (!result.remaining || !result.captions) break;
+        // A batch that handed back captions but measured none of them would
+        // otherwise be asked for again forever -- a recording with no audio, or
+        // captions the aligner cannot place. Stop on the first lack of progress.
+        if (result.coverage.timed <= before) {
+          ctx.notify(
+            `Stopped at ${state.done} of ${state.total}: those captions could not be measured.`,
+            { kind: "warn", key: null }
+          );
+          break;
+        }
       }
       ctx.notify(
         state.stop

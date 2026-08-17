@@ -150,7 +150,12 @@ export function renderTranscript(ctx) {
     time.type = "button";
     // A measured block is marked, because the difference between a measured and
     // an interpolated timestamp is the difference between knowing and guessing.
-    const measured = chunk.cue_ids.every((id) => ctx.cueById.get(id)?.timed);
+    // A caption with no words cannot be measured, so it must not be what stops a
+    // block from reading as measured.
+    const measured = chunk.cue_ids.every((id) => {
+      const item = ctx.cueById.get(id);
+      return !item || !item.text.trim() || item.timed;
+    });
     time.className = measured ? "chunk__time chunk__time--measured" : "chunk__time";
     time.textContent = formatTime(chunk.start);
     time.title = measured
