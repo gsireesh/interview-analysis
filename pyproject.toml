@@ -16,6 +16,10 @@ dependencies = [
 dev = [
     "pytest>=8.0,<10",
     "httpx>=0.27,<1",
+    # Makes --reload watch the filesystem properly instead of polling it. Purely
+    # a nicety: without it uvicorn falls back to stat polling and reload still
+    # works, which is why it sits in dev rather than in the core requirements.
+    "watchfiles>=0.21,<2",
 ]
 # Reading the corpus by meaning rather than by its tags. scikit-learn is
 # enough for the map; sentence-transformers makes it understand paraphrase,

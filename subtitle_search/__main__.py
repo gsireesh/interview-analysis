@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import threading
 import webbrowser
@@ -67,6 +68,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1", help="bind address (default: localhost only)")
     parser.add_argument("--no-open", action="store_true", help="do not open a browser")
     parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="restart the server when the Python source changes (for development)",
+    )
+    parser.add_argument(
         "--dump-parse",
         action="store_true",
         help="print the parse summary for the folder and exit",
@@ -92,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
-    from .app import create_app
+    from .app import FOLDER_ENV, create_app
 
     recording = registry.default
     assert recording is not None
@@ -118,10 +124,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  skipped {name}: {why}")
     print(f"\n  {url}\n")
 
+    if args.reload:
+        print("  reloading on Python changes\n")
+
     if not args.no_open:
+        # In the parent process, so a reload does not open another tab every time.
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
 
-    uvicorn.run(create_app(registry), host=args.host, port=args.port, log_level="warning")
+    if args.reload:
+        # A reloading server re-imports the app in a fresh process, so it cannot be
+        # given one that is already built -- the folder travels in the environment
+        # and the child builds its own registry from it.
+        #
+        # Only this package is watched. The recording folder is deliberately not:
+        # quotes and timings are written into it constantly, and a save should not
+        # restart the server that just did the saving.
+        os.environ[FOLDER_ENV] = str(args.folder.expanduser().resolve())
+        uvicorn.run(
+            "subtitle_search.app:from_environment",
+            factory=True,
+            reload=True,
+            reload_dirs=[str(Path(__file__).resolve().parent)],
+            host=args.host,
+            port=args.port,
+            # Louder than usual on purpose: a reload you cannot see happening is
+            # worse than no reload, because you go on debugging the old code.
+            log_level="info",
+        )
+    else:
+        uvicorn.run(create_app(registry), host=args.host, port=args.port, log_level="warning")
     return 0
 
 

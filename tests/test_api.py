@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from subtitle_search.app import create_app
+from subtitle_search.app import FOLDER_ENV, create_app, from_environment
 from subtitle_search.session import RecordingError, RecordingRegistry, open_recording
 
 from . import fixtures
@@ -346,3 +346,46 @@ def test_undo_over_the_api_refuses_stale_expectations(client):
     )
     assert response.status_code == 400
     assert "changed since then" in response.json()["detail"]
+
+
+# -- the reloading entry point ------------------------------------------
+
+
+def test_the_app_can_be_built_from_the_environment(folder, monkeypatch):
+    """What --reload imports: a fresh process has only the environment to go on."""
+    monkeypatch.setenv(FOLDER_ENV, str(folder))
+    api = TestClient(from_environment())
+
+    config = api.get("/api/config").json()
+    assert len(config["recordings"]) == 1
+    rec_id = config["default_recording_id"]
+    assert api.get(f"/api/recordings/{rec_id}").json()["transcript"]["diagnostics"][
+        "cue_count"
+    ] == 5
+
+
+def test_building_from_an_unset_environment_says_what_to_do(monkeypatch):
+    monkeypatch.delenv(FOLDER_ENV, raising=False)
+    with pytest.raises(RuntimeError, match="subtitle-search <folder>"):
+        from_environment()
+
+
+def test_a_reload_picks_up_quotes_written_since(folder, monkeypatch):
+    """Each reload re-reads the folder, so work done elsewhere is not lost."""
+    monkeypatch.setenv(FOLDER_ENV, str(folder))
+    first = TestClient(from_environment())
+    rec_id = first.get("/api/config").json()["default_recording_id"]
+    first.post(
+        f"/api/recordings/{rec_id}/highlights",
+        json={
+            "text": "Cool.",
+            "start_cue_id": "c0",
+            "start_char_offset": 0,
+            "end_cue_id": "c0",
+            "end_char_offset": 5,
+        },
+    )
+
+    # A second build is what a reload does: same folder, new process, new registry.
+    reloaded = TestClient(from_environment())
+    assert len(reloaded.get(f"/api/recordings/{rec_id}/highlights").json()["highlights"]) == 1

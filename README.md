@@ -418,7 +418,36 @@ so that layout is the thing worth checking on real files.
 --port N      default 8765
 --host ADDR   default 127.0.0.1
 --no-open     do not open a browser
+--reload      restart when the Python source changes
 ```
+
+### Working on the tool
+
+`--reload` restarts the server whenever a `.py` file in the package changes, so a
+backend change is live in about a second instead of after remembering to restart —
+which is the sort of thing you only remember after debugging the old code for a
+while.
+
+```bash
+uv run subtitle-search ~/study/P01 --reload
+```
+
+It logs each reload, deliberately: a reload you cannot see happening is worse than
+none. The browser tab is opened once by the parent process, so a reload does not
+keep opening new ones.
+
+**Only this package is watched.** Your recording folder is not, on purpose —
+quotes and word timings are written into it constantly, and saving a quote should
+not restart the server that just saved it. Frontend files need no reload at all:
+the HTML, CSS and JS are read from disk per request, so a browser refresh is
+enough.
+
+Reloading re-imports the app in a fresh process, which means it cannot be handed
+an app that is already built. The folder therefore travels in
+`SUBTITLE_SEARCH_FOLDER` and the child process builds its own registry from it —
+so every reload also re-reads the folder, and a transcript corrected outside the
+tool shows up. `watchfiles` in the `dev` extra makes the watching event-based;
+without it uvicorn polls instead and reload still works.
 
 ## A library of recordings
 

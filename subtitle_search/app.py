@@ -7,6 +7,7 @@ migration.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
@@ -47,6 +48,31 @@ from .session import Recording, RecordingRegistry
 from .timings import coverage, unmeasured
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+#: Where the reloading server leaves the folder it was pointed at.
+#:
+#: Reload works by re-importing the app in a fresh process, which means the app
+#: cannot be handed to uvicorn already built -- it has to be buildable from
+#: nothing but an import string. So the one piece of runtime configuration
+#: travels in the environment instead of as an argument.
+FOLDER_ENV = "SUBTITLE_SEARCH_FOLDER"
+
+
+def from_environment() -> FastAPI:
+    """Build the app from the environment. The entry point uvicorn reloads.
+
+    Every reload re-reads the folder from disk, so a transcript corrected outside
+    the tool -- or a quotes file written by another copy of it -- is picked up.
+    """
+    folder = os.environ.get(FOLDER_ENV)
+    if not folder:
+        raise RuntimeError(
+            f"{FOLDER_ENV} is not set; start the server with `subtitle-search <folder>`"
+        )
+    registry = RecordingRegistry()
+    registry.add_library(Path(folder))
+    return create_app(registry)
 
 
 def create_app(registry: RecordingRegistry) -> FastAPI:
