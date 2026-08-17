@@ -23,7 +23,7 @@ import {
 import { cue, initPlayer, nudge, seekAndPlay, stepRate, togglePlay } from "./player.js";
 import { initSearch } from "./search.js";
 import { copySelection, hideQuoteBar, initHighlights, renderList, save } from "./highlights.js";
-import { enterEdit, exitEdit, isEditing } from "./editing.js";
+import { enterEdit, exitEdit, isEditing, splitAtWord } from "./editing.js";
 import { notify } from "./chrome.js";
 
 const ctx = {
@@ -559,6 +559,58 @@ ctx.el.chunks.addEventListener("click", (event) => {
   ctx.setMode("reading");
   setCursor(ctx, index);
   if (fromTimestamp) seekAndPlay(ctx, ctx.chunks[index].start, { play: true });
+});
+
+/* Double-click a word to cut the caption in front of it.
+ *
+ * The block-then-edit-then-keystroke route is a lot of ceremony for "these two
+ * sentences are two different people". Pointing at the first word of the second
+ * turn is the whole gesture, and the cut goes in front of that word.
+ *
+ * It writes to the transcript, so the toast says what happened and where the
+ * boundary landed. The original file is always recoverable as `_original`. */
+ctx.el.chunks.addEventListener("dblclick", (event) => {
+  // While correcting text, a double-click means what it always means: select a
+  // word. Edit mode has its own split, on the caret.
+  if (isEditing(ctx)) return;
+
+  const cueEl = event.target.closest(".cue");
+  if (!cueEl) return;
+
+  // The double-click has already selected the word; its start is where the
+  // browser thinks the word begins, which is exactly the point being asked for.
+  const selection = window.getSelection();
+  let node = null;
+  let offset = 0;
+  if (selection?.rangeCount) {
+    const range = selection.getRangeAt(0);
+    if (cueEl === range.startContainer || cueEl.contains(range.startContainer)) {
+      node = range.startContainer;
+      offset = range.startOffset;
+    }
+  }
+  // Fallback for a double-click that selected nothing -- on punctuation, say.
+  // The standard call first, then WebKit's older one.
+  if (!node && document.caretPositionFromPoint) {
+    const position = document.caretPositionFromPoint(event.clientX, event.clientY);
+    if (position && cueEl.contains(position.offsetNode)) {
+      node = position.offsetNode;
+      offset = position.offset;
+    }
+  }
+  if (!node && document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+    if (range && cueEl.contains(range.startContainer)) {
+      node = range.startContainer;
+      offset = range.startOffset;
+    }
+  }
+  if (!node) return;
+
+  event.preventDefault();
+  hideQuoteBar(ctx);
+  selection?.removeAllRanges();
+  splitAtWord(ctx, cueEl, node, offset);
 });
 
 ctx.el.follow.addEventListener("click", () => {

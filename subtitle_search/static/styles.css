@@ -417,7 +417,14 @@ body:not(.page) .notices { bottom: 4.75rem; }
   line-height: 1.4;
 }
 
-.chunk__body { grid-column: 2; min-width: 0; }
+/* An I-beam over the prose: this is text to be pointed at and selected, not a
+   surface to be clicked. The block's own furniture -- the timestamp tick, the
+   inline quote marks -- keeps its pointer. */
+.chunk__body {
+  grid-column: 2;
+  min-width: 0;
+  cursor: text;
+}
 
 .chunk__speaker {
   font-family: var(--sans);

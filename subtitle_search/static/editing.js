@@ -11,7 +11,7 @@
  */
 
 import { api, escapeHtml, formatTime } from "./util.js";
-import { applyHighlights, offsetWithin, refreshChunk } from "./transcript.js";
+import { applyHighlights, offsetWithin, refreshChunk, setCursor } from "./transcript.js";
 import { cue, seekAndPlay } from "./player.js";
 
 // Safari and Chrome support plaintext-only; fall back to sanitizing paste.
@@ -211,16 +211,49 @@ function caretOffset(field) {
 }
 
 /**
- * Cut this caption in two at the caret.
+ * Cut a caption in two, and report which kind of cut it was.
  *
  * Zoom routinely puts the end of one person's turn and the start of another's in
  * a single caption, and no amount of reattributing whole captions can separate
- * them. So the caption itself has to divide first: put the caret at the handover
- * and cut, then each half can be given its own speaker.
+ * them. So the caption itself has to divide first, and then each half can be
+ * given its own speaker.
  *
- * The text the caret was measured against goes along with the offset, so the cut
- * lands between the same two words even if this line has unsaved typing in it.
+ * The text the point was measured against travels with the offset, so the cut
+ * lands between the same two words even if the caller measured it against a copy
+ * with unsaved typing in it. Returns the result, or null if it could not be done.
  */
+async function requestSplit(ctx, cueId, offset, text) {
+  if (!text.slice(0, offset).trim() || !text.slice(offset).trim()) {
+    ctx.notify("A split needs words on both sides of the cut.");
+    return null;
+  }
+
+  const result = await api(`/api/recordings/${ctx.recordingId}/cues/${cueId}/split`, {
+    method: "POST",
+    body: { offset, text },
+  });
+  if (result.backup_created) {
+    ctx.notify(`Original transcript saved as ${result.backup_created}.`);
+  }
+  // Say which it was. A measured cut lands in the real pause between the two
+  // speakers; an estimated one is the old interpolation, and worth knowing about.
+  ctx.notify(
+    result.measured
+      ? `Cut on the measured pause, ${formatTime(result.at)} to ${formatTime(result.tail_at)}.`
+      : `Cut at an estimated ${formatTime(result.at)} — measure timings for an exact one.`
+  );
+  for (const updated of result.highlights || []) {
+    const existing = ctx.highlights.find((h) => h.id === updated.id);
+    if (existing) Object.assign(existing, updated);
+  }
+  if (result.highlights?.length) ctx.onHighlightsChanged?.();
+
+  // Cue ids are positional, so the manual expansions have to move with them.
+  remapSplitCues(ctx, result.cue_ids);
+  return result;
+}
+
+/** Cut the line being edited at the caret, then name who said the second half. */
 async function splitAtCaret(ctx, field) {
   const row = field.closest(".cue-line");
   const cueId = row?.dataset.cueId;
@@ -229,39 +262,19 @@ async function splitAtCaret(ctx, field) {
   const text = field.textContent;
   const offset = caretOffset(field);
   if (offset == null) return;
-  if (!text.slice(0, offset).trim() || !text.slice(offset).trim()) {
-    ctx.notify("Put the cursor between two words to split a line there.");
-    return;
-  }
 
   // The pre-split text must not be saved over the two halves on the way out.
   field.dataset.skip = "1";
   row.classList.add("cue-line--saving");
   try {
-    const result = await api(`/api/recordings/${ctx.recordingId}/cues/${cueId}/split`, {
-      method: "POST",
-      body: { offset, text },
-    });
-    if (result.backup_created) {
-      ctx.notify(`Original transcript saved as ${result.backup_created}.`);
+    const result = await requestSplit(ctx, cueId, offset, text);
+    if (!result) {
+      row.classList.remove("cue-line--saving");
+      delete field.dataset.skip;
+      return;
     }
-    // Say which it was. A measured cut lands in the real pause between the two
-    // speakers; an estimated one is the old interpolation, and worth knowing about.
-    ctx.notify(
-      result.measured
-        ? `Cut on the measured pause, ${formatTime(result.at)} to ${formatTime(result.tail_at)}.`
-        : `Cut at an estimated ${formatTime(result.at)} — measure timings for an exact one.`
-    );
-    for (const updated of result.highlights || []) {
-      const existing = ctx.highlights.find((h) => h.id === updated.id);
-      if (existing) Object.assign(existing, updated);
-    }
-    if (result.highlights?.length) ctx.onHighlightsChanged?.();
-
-    // Cue ids are positional, so the manual expansions have to move with them.
-    remapSplitCues(ctx, result.cue_ids);
-    // Land on the second half: it is the clause that was misfiled, so naming
-    // its speaker is the reason for the split in the first place.
+    // Land on the second half: it is the clause that was misfiled, so naming its
+    // speaker is the reason for the split in the first place.
     ctx.onTranscriptChanged?.(result.recording, { keepEditingCue: result.cue_ids[1] });
     const who = document.querySelector(
       `.cue-line[data-cue-id="${result.cue_ids[1]}"] .cue-line__who`
@@ -274,6 +287,57 @@ async function splitAtCaret(ctx, field) {
     row.classList.remove("cue-line--saving");
     delete field.dataset.skip;
     ctx.notify(`Could not split that line: ${error.message}`, { kind: "warn", key: null });
+  }
+}
+
+/**
+ * The start of the word at a character offset.
+ *
+ * The rule a double-click needs: the word you pointed at begins the second half.
+ * Landing in the space between two words counts as pointing at the one that
+ * follows, and a cut never falls inside a word, which would leave two fragments.
+ */
+export function wordStartAt(text, offset) {
+  const at = Math.max(0, Math.min(offset, text.length));
+  if (/\s/.test(text[at] ?? " ")) {
+    const ahead = text.slice(at).search(/\S/);
+    return ahead < 0 ? at : at + ahead;
+  }
+  let start = at;
+  while (start > 0 && !/\s/.test(text[start - 1])) start -= 1;
+  return start;
+}
+
+/**
+ * Cut a caption where it was double-clicked, from the reading view.
+ *
+ * Splitting used to mean opening the block for editing first, which is a lot of
+ * ceremony for "these two sentences are two people". Pointing at the first word
+ * of the second turn is the whole gesture. The cursor stays on the new second
+ * half so a speaker key lands on it immediately -- `1 2 1 2` carries straight on.
+ */
+export async function splitAtWord(ctx, cueEl, node, nodeOffset) {
+  const cueId = cueEl.dataset.cueId;
+  const item = ctx.cueById.get(cueId);
+  if (!item) return;
+
+  // The cue's own text, not the rendered DOM: inline quote marks split the text
+  // into several nodes, and the server anchors offsets against the caption.
+  const offset = wordStartAt(item.text, offsetWithin(cueEl, node, nodeOffset));
+  if (offset <= 0) {
+    ctx.notify("That word already begins a caption — there is nothing to cut.");
+    return;
+  }
+
+  try {
+    const result = await requestSplit(ctx, cueId, offset, item.text);
+    if (!result) return;
+    ctx.onTranscriptChanged?.(result.recording);
+    // Sit on the second half, which is the one that needs a speaker.
+    const landed = ctx.chunks.findIndex((c) => c.cue_ids.includes(result.cue_ids[1]));
+    if (landed >= 0) setCursor(ctx, landed, { scroll: true });
+  } catch (error) {
+    ctx.notify(`Could not split that caption: ${error.message}`, { kind: "warn", key: null });
   }
 }
 

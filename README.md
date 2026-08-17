@@ -173,9 +173,16 @@ next inside a *single* caption — `So walk me through it. Sure, I read it first
 No amount of reattributing captions separates those, because they are one
 caption. So the caption itself has to divide first.
 
-In edit mode, put the cursor where the handover happens and press **⌘⏎**
-(`Ctrl+Enter`). The caption becomes two, the second half gets focus on its speaker
-field, and you say who said it. `1 2 1 2` then carries on as before.
+**Double-click the first word of the second turn.** That word begins the new
+caption, the cursor lands on it, and a speaker key names it — so `1 2 1 2` carries
+on without ever leaving the reading view. Pointing inside a word cuts in front of
+that whole word rather than mid-word, and pointing at the space between two words
+counts as pointing at the one after it. The reading column shows an I-beam, since
+the prose is there to be pointed at and selected rather than clicked.
+
+The same cut is available on the caret in edit mode, with **⌘⏎** (`Ctrl+Enter`) —
+useful when you are already correcting the words and can see the caption
+boundaries. Double-click means *select a word* while editing, as it should.
 
 The boundary comes from the audio. Splitting first measures that caption's words,
 so the cut lands in the real silence between the two speakers: the first half ends
@@ -186,6 +193,12 @@ and the toast says which of the two you got. Both halves keep the speaker label,
 so the file still re-parses as it did. The cut point travels with the text it was
 measured against, so it lands between the same two words even if the line has
 unsaved typing in it.
+
+A split has **no undo**: rejoining two captions is not implemented, so an
+accidental double-click has to be put right by hand in the transcript (or from
+`_original`, which is always the file as Zoom wrote it). Nothing is lost either
+way — no words change and quotes re-anchor — but it is a nuisance worth knowing
+about before you go double-clicking around.
 
 Splitting is the one edit that changes the *number* of captions, which renumbers
 every caption after it. Quotes are re-anchored across that shift: a quote after
