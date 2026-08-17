@@ -1965,3 +1965,51 @@ mark.hl--noted::after {
 }
 .roster__field--key { width: 2.5rem; font-family: var(--mono); text-align: center; }
 .roster__field:focus { border-color: var(--marker); outline: none; }
+
+
+/* -------------------------------------------------------- word timings -- */
+
+/* Same strip as the roster: a quiet line of state under the header, not a
+   panel. It appears only when there is something to say about timings. */
+.timing {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.375rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-sunk);
+}
+
+.timing__state,
+.timing__why {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+}
+
+.timing__why { font-style: italic; }
+
+.timing__bar {
+  flex: 0 1 12rem;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.timing__fill {
+  display: block;
+  height: 100%;
+  background: var(--marker);
+  transition: width 160ms linear;
+}
+
+/* A measured block's tick is underscored: the timestamp is a measurement, not
+   an interpolation, and the reader should be able to tell without asking. */
+.chunk__time--measured {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--marker);
+}

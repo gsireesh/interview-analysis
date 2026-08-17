@@ -245,6 +245,13 @@ async function splitAtCaret(ctx, field) {
     if (result.backup_created) {
       ctx.notify(`Original transcript saved as ${result.backup_created}.`);
     }
+    // Say which it was. A measured cut lands in the real pause between the two
+    // speakers; an estimated one is the old interpolation, and worth knowing about.
+    ctx.notify(
+      result.measured
+        ? `Cut on the measured pause, ${formatTime(result.at)} to ${formatTime(result.tail_at)}.`
+        : `Cut at an estimated ${formatTime(result.at)} — measure timings for an exact one.`
+    );
     for (const updated of result.highlights || []) {
       const existing = ctx.highlights.find((h) => h.id === updated.id);
       if (existing) Object.assign(existing, updated);

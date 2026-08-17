@@ -20,24 +20,29 @@ It opens `http://127.0.0.1:8765`.
 
 ## Dependencies
 
-Three tiers, so the part you use daily has the fewest ways to break:
+Tiered, so the part you use daily has the fewest ways to break:
 
 | | |
 |---|---|
 | core | `fastapi`, `uvicorn`, `rapidfuzz` — reading, correcting, quoting |
 | `analysis` | `numpy`, `scikit-learn` — the map, graph and signals |
 | `neural` | `sentence-transformers` — paraphrase-aware similarity |
+| `align` | `torch`, `transformers` — [measured word timings](#word-timings) |
 | `dev` | `pytest`, `httpx` |
 
 ```bash
-uv sync --extra analysis --extra neural   # everything
-pip install -e '.[analysis,neural]'       # the pip equivalent
+uv sync --all-extras                          # everything
+pip install -e '.[analysis,neural,align]'     # the pip equivalent
 ```
 
-The extras are genuinely optional: `semantics.py` imports numpy *inside* its
-functions, so the app starts, the reader and library work, and only the semantic
-views return a 503 that names the fix. Every rung degrades to the one below —
-UMAP to t-SNE to PCA, the language model to word overlap.
+`align` also wants `ffmpeg` on `PATH`, which is not a Python package and so cannot
+be pinned in the lockfile.
+
+The extras are genuinely optional: `semantics.py` and `alignment.py` import their
+heavy dependencies *inside* their functions, so the app starts, the reader and
+library work, and only the features that need them return a 503 that names the
+fix. Every rung degrades to the one below — UMAP to t-SNE to PCA, the language
+model to word overlap, measured timings to interpolated ones.
 
 Every requirement carries an upper bound, and `uv.lock` pins the resolved graph
 of all 80 packages. This matters more than install size for a tool meant to open
@@ -172,10 +177,13 @@ In edit mode, put the cursor where the handover happens and press **⌘⏎**
 (`Ctrl+Enter`). The caption becomes two, the second half gets focus on its speaker
 field, and you say who said it. `1 2 1 2` then carries on as before.
 
-The boundary time is interpolated across the caption from where you cut, the same
-estimate the reader uses for a quote — an estimate, but close enough that playing
-either half lands on the right words. Both halves keep the speaker label, so the
-file still re-parses as it did. The cut point travels with the text it was
+The boundary comes from the audio. Splitting first measures that caption's words,
+so the cut lands in the real silence between the two speakers: the first half ends
+on its last word, the second begins on its first, and the pause between them
+belongs to neither — which is more accurate than Zoom's own abutting captions. If
+alignment is unavailable the two halves share one interpolated boundary instead,
+and the toast says which of the two you got. Both halves keep the speaker label,
+so the file still re-parses as it did. The cut point travels with the text it was
 measured against, so it lands between the same two words even if the line has
 unsaved typing in it.
 
@@ -184,6 +192,53 @@ every caption after it. Quotes are re-anchored across that shift: a quote after
 the cut follows its caption, and a quote inside the split one lands in whichever
 half now holds its words — including a quote that straddles the cut, which ends up
 spanning both.
+
+## Word timings
+
+Zoom times a caption's *edges* honestly and tells you nothing about its interior.
+Ask where the word `Sure` is, thirty characters into a ten-second caption, and the
+answer is a proportion of the way through — which is wrong by roughly the length
+of whatever pause the speaker took. In interview audio that is regularly a second
+or more, and it is worst exactly where you care: the handover between two people.
+
+**Measure word timings** in the strip under the header fixes that. It aligns the
+transcript to the audio and stores where every word actually falls, after which a
+quote's timestamp is a measurement rather than an estimate. Measured blocks are
+marked: their timestamp is underlined, so you can tell which kind of number you
+are looking at without having to ask.
+
+This is *forced alignment*, not re-transcription — an important difference. The
+words are an **input**: they come from the transcript, Zoom's plus your
+corrections, and only timing comes back. Nothing in the process can change a word,
+which is why it is safe to run on a folder you have already been quoting from. A
+re-transcription pass would return a different set of words and strand every quote
+anchored into the old ones.
+
+It runs on **demand and in batches**, never automatically. The button walks the
+session a couple of dozen captions at a time so there is progress to watch and a
+Stop that keeps everything measured so far. Splitting a caption measures that one
+caption first, on its own, because a cut is where a guess does the most lasting
+damage — it becomes a timestamp in the file that outlives the decision.
+
+Timings live in `session.words.json` beside the recording, never in the VTT, so
+the transcript stays the file Zoom wrote plus your corrections and a folder
+without that file behaves exactly as it always did.
+
+Each word is addressed by its position in the recording's word sequence rather
+than by caption, which is what makes measuring one caption at a time safe:
+splitting a caption in two leaves the sequence of words *identical*, so every
+timing stays valid with nothing to remap. Rewording a caption does change the
+sequence, so those timings shift — and because every stored timing carries the
+word it was measured against, a desync is caught on load and falls back to
+interpolation instead of quietly reporting the wrong second of audio.
+
+**What it needs and what it costs.** `ffmpeg` on `PATH`, the `align` extra, and a
+one-time ~360MB model download. After that, roughly 0.2s per caption on a laptop
+CPU, so a one-hour interview is a minute or two — and the audio is read locally
+and never sent anywhere. Where two people talk over each other it will place words
+confidently in the wrong gap, and words it has no letters for (`2024`, `50%`) get
+no timing and are interpolated across. Anything unmeasured simply behaves as it
+did before, caption by caption.
 
 **The original is preserved.** Before the first change to a transcript, it is
 copied to `<name>_original.vtt`. That copy is written once and never touched
@@ -289,10 +344,11 @@ Quotes saved by an earlier version, in a file named after the transcript, are
 adopted into the session file on first open. The original is left on disk
 untouched as a backup, never deleted.
 
-Timestamps are estimated by interpolating within a caption based on where your
-selection falls in it, rather than snapping to the caption's start — on Zoom's
-longer captions that is a difference of several seconds. Playback seeks 0.75s
-early so the first word is not clipped.
+Timestamps come from where your selection falls inside a caption rather than
+snapping to the caption's start — on Zoom's longer captions that is a difference
+of several seconds. By default that position is interpolated, which is a guess;
+[measuring the word timings](#word-timings) replaces it with the real thing.
+Playback seeks 0.75s early either way, so the first word is not clipped.
 
 ## Finding quotes
 

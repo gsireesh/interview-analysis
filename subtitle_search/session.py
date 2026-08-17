@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -23,6 +24,8 @@ from .editing import BACKUP_SUFFIX, backup_path, read_source
 from .highlights import HighlightStore
 from .mediainfo import container_duration
 from .models import Part, Transcript
+from .timings import WORDS_FILENAME, TimingStore, attach, word_index_map
+from .timings import coverage as timing_coverage
 from .vtt import VTTParseError, assemble_session, parse_cues, read_speakers, session_digest
 
 #: Searched in order -- video first, since the collapsible pane can show it and
@@ -219,7 +222,30 @@ def build_transcript(folder: Path, part_files: list[PartFiles]) -> tuple[Transcr
             previous_end_wall = files.started_at + timedelta(seconds=duration)
 
     name = part_files[0].vtt_path.name if len(part_files) == 1 else f"{len(part_files)} recordings"
-    return assemble_session(specs, parts, source_name=name), sources
+    transcript = assemble_session(specs, parts, source_name=name)
+    apply_timings(folder, transcript)
+    return transcript, sources
+
+
+def apply_timings(
+    folder: Path, transcript: Transcript, store: TimingStore | None = None
+) -> TimingStore:
+    """Hand every aligned cue its measured word spans.
+
+    A folder with no timings file is left exactly as it was, which is what makes
+    alignment opt-in: nothing about the reader changes until it is run.
+    """
+    store = store if store is not None else TimingStore(folder / WORDS_FILENAME)
+    if store.empty:
+        return store
+    for part in transcript.parts:
+        measured = store.words(part.vtt_name)
+        if not measured:
+            continue
+        for cue, spans in attach(transcript.cues_in_part(part.index), measured, part.offset):
+            if spans:
+                transcript.replace_cue(cue.with_words(spans))
+    return store
 
 
 def _media_kind(path: Path | None) -> str | None:
@@ -238,6 +264,8 @@ class Recording:
     #: Each part's transcript file as text, kept so corrections can be spliced
     #: into it without re-reading and without reformatting the rest.
     sources: list[str]
+    #: Measured word timings, empty until alignment has been run.
+    timings: TimingStore
 
     def reload_transcript(self) -> None:
         """Re-derive the session after its transcript changed on disk.
@@ -251,8 +279,42 @@ class Recording:
         transcript, sources = build_transcript(self.folder, self.part_files)
         self.transcript = transcript
         self.sources = sources
+        self.timings = TimingStore(self.folder / WORDS_FILENAME)
         self.store.transcript = transcript
         self.store.restamp()
+
+    def measure(self, cues) -> int:
+        """Align captions to their audio and keep the word timings that come back.
+
+        Returns how many words were measured. Captions from several parts can be
+        passed at once; each is aligned against its own recording, since a
+        session's parts are separate files on one timeline.
+        """
+        from .alignment import align_cues  # deferred: pulls in torch on first use
+
+        grouped: dict[int, list] = defaultdict(list)
+        for cue in cues:
+            grouped[cue.part_index].append(cue)
+
+        written = 0
+        for part_index, group in sorted(grouped.items()):
+            files = self.part_files[part_index]
+            if files.media_path is None:
+                continue  # nothing to align against
+            part = self.transcript.part(part_index)
+            positions = word_index_map(self.transcript.cues_in_part(part_index))
+            targets = [
+                (cue, positions.get(cue.id, 0))
+                for cue in sorted(group, key=lambda c: c.index)
+            ]
+            measured = align_cues(files.media_path, targets, part.offset if part else 0.0)
+            if measured:
+                self.timings.record(files.vtt_path.name, measured)
+                written += len(measured)
+
+        if written:
+            apply_timings(self.folder, self.transcript, self.timings)
+        return written
 
     def restamp_part(self, part_index: int, content: str) -> None:
         """Refresh digests after a part's transcript was corrected on disk."""
@@ -306,6 +368,9 @@ class Recording:
             "known_tags": self.store.known_tags(),
             "highlights_stale": self.store.stale,
             "migrated_from": self.store.migrated_from,
+            # How much of the session has real timings rather than interpolated
+            # ones, so the reader can be honest about which it is showing.
+            "timing_coverage": timing_coverage(self.transcript),
         }
 
 
@@ -325,6 +390,7 @@ def open_recording(folder: Path) -> Recording:
         store=store,
         part_files=part_files,
         sources=sources,
+        timings=TimingStore(folder / WORDS_FILENAME),
     )
 
 

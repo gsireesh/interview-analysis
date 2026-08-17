@@ -201,3 +201,106 @@ def test_split_route_rejects_a_cut_with_nothing_on_one_side(client):
     response = api.post(f"/api/recordings/{rec_id}/cues/c3/split", json={"offset": 0})
     assert response.status_code == 400
     assert "both sides" in response.json()["detail"]
+
+
+# -- measuring word timings ---------------------------------------------
+
+
+def fake_aligner(monkeypatch, per_word=0.2, gap=0.05):
+    """Stand in for the acoustic model: lay each word out at a fixed rate.
+
+    The route's job is batching, storing and reporting, none of which needs real
+    audio -- and a test that downloaded half a gigabyte of weights would not run.
+    """
+    import subtitle_search.alignment as engine
+    from subtitle_search.timings import TimedWord, split_words
+
+    def align_cues(media_path, targets, base):
+        measured = []
+        for cue, first in targets:
+            at = cue.start - base
+            for n, (_, _, word) in enumerate(split_words(cue.text)):
+                measured.append(
+                    TimedWord(first + n, engine.normalize_word(word), at, at + per_word)
+                )
+                at += per_word + gap  # real speech leaves silence between words
+        return measured
+
+    monkeypatch.setattr(engine, "align_cues", align_cues)
+
+
+def test_alignment_state_reports_availability_and_coverage(client):
+    api, rec_id = client
+    body = api.get(f"/api/recordings/{rec_id}/alignment").json()
+    assert set(body) == {"available", "reason", "coverage"}
+    assert body["coverage"] == {"timed": 0, "total": 5, "complete": False}
+
+
+def test_align_measures_a_batch_and_reports_what_is_left(client, monkeypatch):
+    api, rec_id = client
+    fake_aligner(monkeypatch)
+
+    first = api.post(f"/api/recordings/{rec_id}/align", json={"limit": 2}).json()
+    assert first["captions"] == 2
+    assert first["coverage"]["timed"] == 2
+    assert first["remaining"] == 3
+
+    rest = api.post(f"/api/recordings/{rec_id}/align", json={"limit": 100}).json()
+    assert rest["coverage"] == {"timed": 5, "total": 5, "complete": True}
+    assert rest["remaining"] == 0
+
+
+def test_align_can_be_pointed_at_named_captions(client, monkeypatch):
+    api, rec_id = client
+    fake_aligner(monkeypatch)
+
+    body = api.post(f"/api/recordings/{rec_id}/align", json={"cue_ids": ["c3"]}).json()
+    assert body["coverage"]["timed"] == 1
+
+    cues = api.get(f"/api/recordings/{rec_id}").json()["transcript"]["cues"]
+    assert [c["id"] for c in cues if c["timed"]] == ["c3"]
+
+
+def test_measured_times_reach_the_reader(client, monkeypatch):
+    api, rec_id = client
+    fake_aligner(monkeypatch)
+    api.post(f"/api/recordings/{rec_id}/align", json={"cue_ids": ["c3"]})
+
+    # c3 runs 23.1 to 27.4 and reads "I can see it. Looks good on my end." The
+    # stub strides 0.25s per word, so 'Looks' -- the fifth -- starts a second in.
+    # Interpolation put it at 14/35 of a 4.3s caption: nearly a second later.
+    quote = api.post(
+        f"/api/recordings/{rec_id}/highlights",
+        json={
+            "text": "Looks good",
+            "start_cue_id": "c3",
+            "start_char_offset": 14,
+            "end_cue_id": "c3",
+            "end_char_offset": 24,
+        },
+    ).json()["highlight"]
+    assert quote["start_time"] == pytest.approx(24.1, abs=0.01)
+
+
+def test_align_reports_when_it_cannot_run(client, monkeypatch):
+    api, rec_id = client
+    import subtitle_search.app as app_module
+
+    monkeypatch.setattr(app_module, "alignment_available", lambda: (False, "no ffmpeg here"))
+    response = api.post(f"/api/recordings/{rec_id}/align", json={})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "no ffmpeg here"
+
+
+def test_a_split_measures_the_caption_it_is_about_to_cut(client, monkeypatch):
+    api, rec_id = client
+    fake_aligner(monkeypatch)
+    text = "I can see it. Looks good on my end."
+
+    body = api.post(
+        f"/api/recordings/{rec_id}/cues/c3/split",
+        json={"offset": text.index("Looks"), "text": text},
+    ).json()
+    # Nothing was measured beforehand: the split asked for that one caption.
+    assert body["measured"] is True
+    assert body["at"] < body["tail_at"]

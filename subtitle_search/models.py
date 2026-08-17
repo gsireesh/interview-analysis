@@ -13,7 +13,7 @@ back to a position in a particular file is what ``Part.offset`` is for.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 
@@ -72,23 +72,72 @@ class Cue:
     timing_start: int = 0
     prefix: str = ""
     suffix: str = ""
+    #: Measured word spans, when this cue has been aligned to the audio:
+    #: ``(char_start, char_end, start, end)`` in session time, in text order.
+    #: Empty means nothing has been measured and times are interpolated.
+    words: tuple[tuple[int, int, float, float], ...] = ()
 
     @property
     def duration(self) -> float:
         return max(0.0, self.end - self.start)
 
-    def time_at_offset(self, char_offset: int) -> float:
-        """Estimate the session time at a character offset within this cue's text.
+    @property
+    def timed(self) -> bool:
+        return bool(self.words)
 
-        Linear interpolation across the cue. Zoom cues run up to ~10s and carry a
-        few dozen words, so seeking to ``start`` for a quote near the end of a cue
-        can be several seconds early -- enough to matter when you are checking
-        whether a quote says what you think it says.
+    def time_at_offset(self, char_offset: int) -> float:
+        """The session time at a character offset within this cue's text.
+
+        Measured where the words have been aligned to the audio, interpolated
+        where they have not. Interpolation divides the caption by character
+        count, which is wrong by about the length of any pause the speaker took --
+        and Zoom captions run to ten seconds, so that is regularly a second or
+        more. Alignment replaces the estimate with the real thing.
         """
+        if self.words:
+            return self._measured(char_offset)
         if not self.text:
             return self.start
         ratio = min(max(char_offset, 0), len(self.text)) / len(self.text)
         return self.start + ratio * self.duration
+
+    def _measured(self, char_offset: int) -> float:
+        offset = min(max(char_offset, 0), len(self.text))
+        previous_end = self.start
+        for char_start, char_end, start, end in self.words:
+            if offset < char_start:
+                # In the space before a word -- punctuation, or a word the
+                # aligner could not place. Land on the next word that was
+                # measured, so playback starts on speech rather than in silence.
+                return start
+            if offset < char_end:
+                span = char_end - char_start
+                within = (offset - char_start) / span if span else 0.0
+                return start + within * (end - start)
+            previous_end = end
+        return previous_end
+
+    def boundary_at_offset(self, char_offset: int) -> tuple[float, float] | None:
+        """The measured silence around a point: last word before, first word after.
+
+        This is what a split wants. Cutting a caption in two at an interpolated
+        point puts the boundary in the middle of somebody's word; cutting at a
+        measured one gives the first half an end and the second half a start with
+        the pause between them belonging to neither. ``None`` when this caption
+        has no measurement to cut on.
+        """
+        if not self.words:
+            return None
+        offset = min(max(char_offset, 0), len(self.text))
+        before = [end for char_start, _, _, end in self.words if char_start < offset]
+        after = [start for char_start, _, start, _ in self.words if char_start >= offset]
+        if not before or not after:
+            return None
+        return before[-1], after[0]
+
+    def with_words(self, words: tuple[tuple[int, int, float, float], ...]) -> "Cue":
+        """A copy carrying measured word spans."""
+        return replace(self, words=words)
 
     def shifted(self, new_id: str, new_index: int, offset: float, part_index: int) -> "Cue":
         return Cue(
@@ -107,7 +156,11 @@ class Cue:
         )
 
     def edited(self, text: str, source_end: int) -> "Cue":
-        """A copy carrying corrected text and the span it now occupies."""
+        """A copy carrying corrected text and the span it now occupies.
+
+        Measured words are dropped: their character offsets describe the text as
+        it was. The caption falls back to interpolation until it is re-aligned.
+        """
         return Cue(
             id=self.id,
             index=self.index,
@@ -124,20 +177,17 @@ class Cue:
         )
 
     def moved(self, delta: int) -> "Cue":
-        """A copy whose source span has shifted, after an earlier cue was edited."""
-        return Cue(
-            id=self.id,
-            index=self.index,
-            start=self.start,
-            end=self.end,
-            speaker=self.speaker,
-            text=self.text,
-            part_index=self.part_index,
+        """A copy whose source span has shifted, after an earlier cue was edited.
+
+        Keeps its measured words: only this cue's position in the file changed,
+        not its text, and dropping them would throw away the alignment of
+        everything downstream of a one-word correction.
+        """
+        return replace(
+            self,
             source_start=self.source_start + delta,
             source_end=self.source_end + delta,
             timing_start=self.timing_start + delta,
-            prefix=self.prefix,
-            suffix=self.suffix,
         )
 
     def to_dict(self) -> dict:
@@ -149,6 +199,9 @@ class Cue:
             "speaker": self.speaker,
             "text": self.text,
             "part_index": self.part_index,
+            # Whether this caption's times are measured or interpolated. The
+            # reader marks the difference rather than presenting both as equal.
+            "timed": self.timed,
         }
 
 

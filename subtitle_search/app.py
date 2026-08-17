@@ -20,6 +20,8 @@ from .editing import (
     apply_roster_edit,
     apply_speaker_edit,
 )
+from .alignment import AlignmentError
+from .alignment import available as alignment_available
 from .highlights import COLORS, HighlightError
 from .library import (
     THEMES_FILENAME,
@@ -41,6 +43,7 @@ from .semantics import (
 from .media import serve_media
 from .search import regex_search, search
 from .session import Recording, RecordingRegistry
+from .timings import coverage, unmeasured
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -126,6 +129,57 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
         # Rostering changes what joins, so the reader takes the whole thing back.
         return {**result, "recording": recording.payload()}
 
+    #: Captions measured per request. Small enough that the reader can show
+    #: progress and stop partway, large enough that the model load amortizes.
+    ALIGN_BATCH = 25
+
+    @app.get("/api/recordings/{recording_id}/alignment")
+    def alignment_state(recording_id: str) -> dict:
+        """Whether word timings can be measured here, and how many exist."""
+        recording = require(recording_id)
+        ok, reason = alignment_available()
+        return {
+            "available": ok,
+            "reason": reason,
+            "coverage": coverage(recording.transcript),
+        }
+
+    @app.post("/api/recordings/{recording_id}/align")
+    def align(recording_id: str, payload: dict = Body(default={})) -> dict:
+        """Measure word timings for some captions, or for the next batch of them.
+
+        Handed out in batches rather than run to completion in one request: the
+        reader loops until nothing is left, which gives it progress to show and
+        makes stopping halfway keep everything measured so far.
+        """
+        recording = require(recording_id)
+        ok, reason = alignment_available()
+        if not ok:
+            raise HTTPException(status_code=503, detail=reason)
+
+        requested = payload.get("cue_ids")
+        if requested:
+            targets = [c for c in (recording.transcript.cue(i) for i in requested) if c]
+        else:
+            limit = max(1, min(int(payload.get("limit") or ALIGN_BATCH), 200))
+            targets = unmeasured(recording.transcript, limit)
+
+        try:
+            measured = recording.measure(targets)
+        except AlignmentError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"could not write the timings: {exc}"
+            ) from exc
+
+        return {
+            "measured": measured,
+            "captions": len(targets),
+            "coverage": coverage(recording.transcript),
+            "remaining": len(unmeasured(recording.transcript, 10_000)),
+        }
+
     @app.post("/api/recordings/{recording_id}/cues/{cue_id}/split")
     def split_cue(recording_id: str, cue_id: str, payload: dict = Body(...)) -> dict:
         """Cut one caption in two, so two speakers in one block can be separated."""
@@ -136,6 +190,7 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
                 cue_id,
                 payload.get("offset", 0),
                 payload.get("text"),
+                align=bool(payload.get("align", True)),
             )
         except EditError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -8,7 +8,7 @@
  * READING without stopping playback, and a "Follow along" button re-attaches.
  */
 
-import { $, api, formatTime } from "./util.js";
+import { $, api, escapeHtml, formatTime } from "./util.js";
 import {
   applyHighlights,
   cacheGeometry,
@@ -37,6 +37,7 @@ const ctx = {
     meta: $("meta"),
     notices: $("notices"),
     roster: $("roster"),
+    timing: $("timing"),
     sidebar: $("sidebar"),
     panelSearch: $("panel-search"),
     panelHighlights: $("panel-highlights"),
@@ -250,6 +251,99 @@ async function load() {
         .join("");
   };
 
+  /* ------------------------------------------------------ word timings -- */
+
+  /* Times inside a caption are interpolated until the words have been aligned to
+   * the audio, which is wrong by about the length of any pause the speaker took.
+   * This strip says which of the two you are looking at and offers to fix it.
+   *
+   * Alignment is not automatic: it reads the audio and costs real seconds, so it
+   * is a thing you ask for. Splitting a caption asks for that one caption by
+   * itself, because a cut is where a guess does the most damage. */
+  ctx.alignState = { available: false, reason: "", running: false, done: 0, total: 0 };
+
+  ctx.renderTiming = () => {
+    const state = ctx.alignState;
+    const cover = ctx.data?.timing_coverage || { timed: 0, total: 0, complete: false };
+    // Nothing to offer and nothing measured: stay out of the way entirely.
+    if (!state.available && !cover.timed) {
+      ctx.el.timing.hidden = true;
+      return;
+    }
+    ctx.el.timing.hidden = false;
+
+    if (state.running) {
+      const pct = state.total ? Math.round((state.done / state.total) * 100) : 0;
+      ctx.el.timing.innerHTML =
+        `<span class="roster__lead">timings</span>` +
+        `<span class="timing__bar"><span class="timing__fill" style="width:${pct}%"></span></span>` +
+        `<span class="timing__state">measuring — ${state.done} of ${state.total} captions</span>` +
+        `<button class="btn" data-align-stop="1" type="button">Stop</button>`;
+      return;
+    }
+
+    const measured = `${cover.timed} of ${cover.total} captions measured`;
+    ctx.el.timing.innerHTML =
+      `<span class="roster__lead">timings</span>` +
+      `<span class="timing__state">${cover.complete ? "aligned to the audio" : measured}</span>` +
+      (state.available && !cover.complete
+        ? `<button class="btn" data-align="1" type="button">${cover.timed ? "Measure the rest" : "Measure word timings"}</button>`
+        : "") +
+      (state.available
+        ? ""
+        : `<span class="timing__why">${escapeHtml(state.reason)}</span>`);
+  };
+
+  /** Walk the session in batches, so there is progress to show and a way out. */
+  ctx.runAlignment = async () => {
+    const state = ctx.alignState;
+    if (state.running) return;
+    const cover = ctx.data?.timing_coverage || { timed: 0, total: 0 };
+    Object.assign(state, {
+      running: true,
+      stop: false,
+      done: cover.timed || 0,
+      total: cover.total || 0,
+    });
+    ctx.renderTiming();
+
+    try {
+      while (!state.stop) {
+        const result = await api(`/api/recordings/${ctx.recordingId}/align`, {
+          method: "POST",
+          body: {},
+        });
+        state.done = result.coverage.timed;
+        state.total = result.coverage.total;
+        ctx.data.timing_coverage = result.coverage;
+        ctx.renderTiming();
+        // A batch that measured nothing would otherwise spin forever.
+        if (!result.remaining || !result.captions) break;
+      }
+      ctx.notify(
+        state.stop
+          ? `Stopped — ${state.done} of ${state.total} captions measured.`
+          : "Word timings measured. Timestamps in this session are no longer estimates."
+      );
+    } catch (error) {
+      ctx.notify(`Could not measure timings: ${error.message}`, { kind: "warn", key: null });
+    } finally {
+      state.running = false;
+      // The cues themselves changed server-side, so take the session back to
+      // pick up which captions are now measured.
+      try {
+        ctx.onTranscriptChanged(await api(`/api/recordings/${ctx.recordingId}`));
+      } catch (error) {
+        ctx.renderTiming();
+      }
+    }
+  };
+
+  ctx.el.timing.addEventListener("click", (event) => {
+    if (event.target.closest("[data-align]")) return ctx.runAlignment();
+    if (event.target.closest("[data-align-stop]")) ctx.alignState.stop = true;
+  });
+
   const escapeAttr = (value) => String(value).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -331,6 +425,7 @@ async function load() {
     renderList(ctx);
 
     ctx.renderRoster();
+    ctx.renderTiming();
     const index = keepEditingCue
       ? ctx.chunks.findIndex((chunk) => chunk.cue_ids.includes(keepEditingCue))
       : ctx.cursorIndex;
@@ -349,6 +444,14 @@ async function load() {
   ctx.showTab("highlights");
   ctx.renderRoster();
   setCursor(ctx, 0);
+
+  // Asked once: whether this machine can measure timings at all, and why not.
+  api(`/api/recordings/${ctx.recordingId}/alignment`)
+    .then((state) => {
+      Object.assign(ctx.alignState, { available: state.available, reason: state.reason });
+      ctx.renderTiming();
+    })
+    .catch(() => {});
 
   // A link from the library or the themes board carries a moment with it.
   const at = Number(params.get("t"));

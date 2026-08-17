@@ -29,6 +29,15 @@ analysis = [
 neural = [
     "sentence-transformers>=2.2,<6",
 ]
+# Measuring where each word actually falls in the audio, so a timestamp inside a
+# caption is a measurement instead of an interpolation. Also needs ffmpeg on
+# PATH, which is not a Python package and so cannot be pinned here. The model is
+# fetched once on first use; the audio is read locally and never sent anywhere.
+align = [
+    "torch>=2.1,<3",
+    "transformers>=4.30,<6",
+    "numpy>=1.24,<3",
+]
 
 [project.scripts]
 subtitle-search = "subtitle_search.__main__:main"

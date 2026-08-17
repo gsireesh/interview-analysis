@@ -27,6 +27,7 @@ import tempfile
 from pathlib import Path
 
 from .models import Cue
+from .timings import split_words, word_index_of
 from .vtt import read_speakers, splice_cue, splice_speaker, split_cue_block, write_roster
 
 
@@ -165,7 +166,9 @@ def apply_roster_edit(recording, entries: list[dict]) -> dict:
     return {"roster": recording.transcript.roster}
 
 
-def apply_cue_split(recording, cue_id: str, offset: int, against: str | None = None) -> dict:
+def apply_cue_split(
+    recording, cue_id: str, offset: int, against: str | None = None, align: bool = True
+) -> dict:
     """Cut one caption into two at a point inside its text.
 
     The case this is for: Zoom puts the end of one person's turn and the start of
@@ -193,16 +196,43 @@ def apply_cue_split(recording, cue_id: str, offset: int, against: str | None = N
     if not head or not tail:
         raise EditError("a split needs words on both sides of the cut")
 
+    # Measure this one caption first, if it has not been. A cut is exactly where
+    # interpolation is least defensible -- it becomes a timestamp in the file that
+    # outlives the decision -- so it is worth a second of audio work to place it
+    # on the real silence instead of a guess.
+    if align and not cue.timed:
+        from .alignment import AlignmentError
+
+        try:
+            if recording.measure([cue]):
+                cue = recording.transcript.cue(cue_id) or cue
+        except AlignmentError:
+            pass  # no model, no ffmpeg, no audio: interpolate as before
+
     part_index = cue.part_index
     vtt_path = recording.part_files[part_index].vtt_path
-    at = cue.time_at_offset(offset)
+
+    # Where the words have been aligned, the cut lands in the measured silence
+    # between them and the halves keep their own edges. Otherwise both share one
+    # interpolated boundary, which is a guess and is marked as one.
+    frame = cue.boundary_at_offset(offset)
+    measured = frame is not None
+    at, tail_at = frame if frame else (cue.time_at_offset(offset),) * 2
+
     # Never produce a zero-length half; a caption of no duration cannot be played.
-    at = min(max(at, cue.start + 0.001), cue.end - 0.001)
+    floor, ceiling = cue.start + 0.001, cue.end - 0.001
+    at = min(max(at, floor), ceiling)
+    tail_at = min(max(tail_at, at), ceiling)
 
     part = transcript.part(part_index)
     backup_created = ensure_backup(vtt_path)
     content = split_cue_block(
-        recording.sources[part_index], cue, offset, at, part.offset if part else 0.0
+        recording.sources[part_index],
+        cue,
+        offset,
+        at,
+        part.offset if part else 0.0,
+        tail_at,
     )
     write_atomically(vtt_path, content)
     recording.sources[part_index] = content
@@ -217,6 +247,8 @@ def apply_cue_split(recording, cue_id: str, offset: int, against: str | None = N
         "changed": True,
         "cue_ids": [f"c{cue.index}", f"c{cue.index + 1}"],
         "at": round(at, 3),
+        "tail_at": round(tail_at, 3),
+        "measured": measured,
         "backup_created": backup_created,
         "highlights": touched,
     }
@@ -318,6 +350,14 @@ def apply_cue_edit(recording, cue_id: str, raw_text: str) -> dict:
     except IndexError as exc:
         raise EditError("cannot locate the transcript this line came from") from exc
 
+    # Where this caption's words sit in the part's sequence, which is the index
+    # space the measured timings are addressed in. Read before anything changes.
+    part_cues = transcript.cues_in_part(part_index)
+    vtt_name = vtt_path.name
+    first_word = word_index_of(part_cues, cue_id)
+    was_words = len(split_words(cue.text))
+    now_words = len(split_words(new_text))
+
     backup_created = ensure_backup(vtt_path)
     updated_content = splice_cue(content, cue, new_text)
     write_atomically(vtt_path, updated_content)
@@ -334,6 +374,11 @@ def apply_cue_edit(recording, cue_id: str, raw_text: str) -> dict:
         for other in list(transcript.cues_in_part(part_index)):
             if other.id != cue_id and other.source_start >= old_source_end:
                 transcript.replace_cue(other.moved(delta))
+
+    # This caption's own words were re-worded, so its measurements are void; the
+    # ones after it are still good but have moved along the sequence.
+    recording.timings.drop(vtt_name, first_word, first_word + was_words - 1)
+    recording.timings.shift(vtt_name, first_word + was_words, now_words - was_words)
 
     recording.restamp_part(part_index, updated_content)
     touched = recording.store.remap_cue(cue_id, old_text, new_text)

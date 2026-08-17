@@ -148,9 +148,14 @@ export function renderTranscript(ctx) {
 
     const time = document.createElement("button");
     time.type = "button";
-    time.className = "chunk__time";
+    // A measured block is marked, because the difference between a measured and
+    // an interpolated timestamp is the difference between knowing and guessing.
+    const measured = chunk.cue_ids.every((id) => ctx.cueById.get(id)?.timed);
+    time.className = measured ? "chunk__time chunk__time--measured" : "chunk__time";
     time.textContent = formatTime(chunk.start);
-    time.title = "Play from here";
+    time.title = measured
+      ? "Play from here — this block's words are aligned to the audio"
+      : "Play from here — times inside this block are estimated";
     article.appendChild(time);
 
     const body = document.createElement("div");

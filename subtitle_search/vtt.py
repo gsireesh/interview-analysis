@@ -570,7 +570,9 @@ def vtt_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
 
 
-def split_cue_block(content: str, cue: Cue, offset: int, at: float, base: float = 0.0) -> str:
+def split_cue_block(
+    content: str, cue: Cue, offset: int, at: float, base: float = 0.0, tail_at: float | None = None
+) -> str:
     """Turn one cue into two, cut at a point inside its text.
 
     Zoom regularly puts two people in one caption -- an answer beginning halfway
@@ -587,13 +589,20 @@ def split_cue_block(content: str, cue: Cue, offset: int, at: float, base: float 
     session times, but a file's own timestamps start from zero, so the offset has
     to come back off before anything is written -- otherwise a split in a later
     part of an interrupted session would write times minutes ahead of the audio.
+
+    ``tail_at`` lets the halves *not* meet. Where the words have been aligned to
+    the audio, the first half can end on its last word and the second begin on its
+    first, leaving the pause between two speakers belonging to neither -- which is
+    both more accurate and what a reader listening back expects. Without a
+    measurement the two share one interpolated boundary, as Zoom's own do.
     """
     head = _clean(cue.text[:offset])
     tail = _clean(cue.text[offset:])
-    boundary = vtt_timestamp(at - base)
+    head_end = vtt_timestamp(at - base)
+    tail_start = vtt_timestamp((at if tail_at is None else tail_at) - base)
     replacement = (
-        f"{vtt_timestamp(cue.start - base)} --> {boundary}\n{cue.prefix}{head}{cue.suffix}\n\n"
-        f"{boundary} --> {vtt_timestamp(cue.end - base)}\n{cue.prefix}{tail}{cue.suffix}"
+        f"{vtt_timestamp(cue.start - base)} --> {head_end}\n{cue.prefix}{head}{cue.suffix}\n\n"
+        f"{tail_start} --> {vtt_timestamp(cue.end - base)}\n{cue.prefix}{tail}{cue.suffix}"
     )
     return content[: cue.timing_start] + replacement + content[cue.source_end :]
 
