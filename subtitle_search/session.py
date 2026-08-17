@@ -243,8 +243,10 @@ class Recording:
         """Re-derive the session after its transcript changed on disk.
 
         Reassigning a speaker changes how cues group, so chunks have to be
-        rebuilt rather than patched. Cue ids are positional and the edit does not
-        add or remove cues, so saved quotes stay anchored across the rebuild.
+        rebuilt rather than patched. Cue ids are positional, so an edit that
+        changes the cue *count* -- splitting one caption in two -- moves the ids
+        of everything after it, and the caller is responsible for re-anchoring
+        saved quotes across that shift.
         """
         transcript, sources = build_transcript(self.folder, self.part_files)
         self.transcript = transcript

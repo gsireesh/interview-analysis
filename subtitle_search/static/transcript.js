@@ -254,7 +254,7 @@ export function applyHighlights(ctx) {
 
 /* ------------------------------------------------------------ selection -- */
 
-function offsetWithin(cueEl, node, offset) {
+export function offsetWithin(cueEl, node, offset) {
   if (node === cueEl) {
     let total = 0;
     for (let i = 0; i < offset && i < cueEl.childNodes.length; i += 1) {

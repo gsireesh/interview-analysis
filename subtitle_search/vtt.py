@@ -355,7 +355,7 @@ def parse_cues(content: str) -> tuple[list[Cue], str]:
     """Parse VTT text into cues. Returns the cues and the detection method."""
     timings: list[tuple[float, float]] = []
     payloads: list[str] = []
-    spans: list[tuple[int, int]] = []
+    spans: list[tuple[int, int, int]] = []
 
     for block in _iter_blocks(_iter_lines(content)):
         timing_idx = next((i for i, line in enumerate(block) if "-->" in line.text), None)
@@ -377,7 +377,7 @@ def parse_cues(content: str) -> tuple[list[Cue], str]:
             continue
         timings.append((start, max(start, end)))
         payloads.append(payload)
-        spans.append((payload_lines[0].start, payload_lines[-1].end))
+        spans.append((payload_lines[0].start, payload_lines[-1].end, block[timing_idx].start))
 
     if not timings:
         raise VTTParseError("no cues found; is this a WebVTT file?")
@@ -401,6 +401,7 @@ def parse_cues(content: str) -> tuple[list[Cue], str]:
                 text=item.text,
                 source_start=span[0],
                 source_end=span[1],
+                timing_start=span[2],
                 prefix=item.prefix,
                 suffix=item.suffix,
             )
@@ -556,6 +557,45 @@ def session_digest(part_digests: list[str]) -> str:
     if len(part_digests) == 1:
         return part_digests[0]
     return hashlib.sha256(" ".join(part_digests).encode("utf-8")).hexdigest()
+
+
+def vtt_timestamp(seconds: float) -> str:
+    """``HH:MM:SS.mmm``, the form a cue's timing line wants."""
+    seconds = max(0.0, seconds)
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, secs = divmod(remainder, 60)
+    millis = int(round((seconds - int(seconds)) * 1000))
+    if millis == 1000:  # rounding carried
+        millis, secs = 0, secs + 1
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
+
+
+def split_cue_block(content: str, cue: Cue, offset: int, at: float, base: float = 0.0) -> str:
+    """Turn one cue into two, cut at a point inside its text.
+
+    Zoom regularly puts two people in one caption -- an answer beginning halfway
+    through the interviewer's line -- and no amount of reassigning whole cues can
+    separate them. This rewrites the block as two, sharing the boundary time, so
+    each half can be attributed on its own.
+
+    The whole block is replaced rather than patched, because the first half's end
+    time changes as well as its words. The second half is written without a cue
+    identifier: they are optional in WebVTT and carry no meaning, and renumbering
+    every later cue would turn a two-line edit into a whole-file rewrite.
+
+    ``base`` is where this part sits on the session timeline. Cue times are
+    session times, but a file's own timestamps start from zero, so the offset has
+    to come back off before anything is written -- otherwise a split in a later
+    part of an interrupted session would write times minutes ahead of the audio.
+    """
+    head = _clean(cue.text[:offset])
+    tail = _clean(cue.text[offset:])
+    boundary = vtt_timestamp(at - base)
+    replacement = (
+        f"{vtt_timestamp(cue.start - base)} --> {boundary}\n{cue.prefix}{head}{cue.suffix}\n\n"
+        f"{boundary} --> {vtt_timestamp(cue.end - base)}\n{cue.prefix}{tail}{cue.suffix}"
+    )
+    return content[: cue.timing_start] + replacement + content[cue.source_end :]
 
 
 def splice_payload(content: str, cue: Cue, prefix: str, text: str, suffix: str) -> str:

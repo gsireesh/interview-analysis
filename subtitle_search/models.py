@@ -68,6 +68,8 @@ class Cue:
     #: back into the original bytes instead of regenerating the file.
     source_start: int = 0
     source_end: int = 0
+    #: Start of the cue's timing line, so a split can rewrite it.
+    timing_start: int = 0
     prefix: str = ""
     suffix: str = ""
 
@@ -99,6 +101,7 @@ class Cue:
             part_index=part_index,
             source_start=self.source_start,
             source_end=self.source_end,
+            timing_start=self.timing_start,
             prefix=self.prefix,
             suffix=self.suffix,
         )
@@ -115,6 +118,7 @@ class Cue:
             part_index=self.part_index,
             source_start=self.source_start,
             source_end=source_end,
+            timing_start=self.timing_start,
             prefix=self.prefix,
             suffix=self.suffix,
         )
@@ -131,6 +135,7 @@ class Cue:
             part_index=self.part_index,
             source_start=self.source_start + delta,
             source_end=self.source_end + delta,
+            timing_start=self.timing_start + delta,
             prefix=self.prefix,
             suffix=self.suffix,
         )

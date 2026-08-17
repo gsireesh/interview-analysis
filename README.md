@@ -154,6 +154,30 @@ Enter saves a line and moves to the next; Esc abandons the line you are on and
 finishes. Focusing a line cues the player to it without interrupting playback, so
 you can correct while listening.
 
+### Cutting a caption in two
+
+Zoom's worst habit is putting the end of one person's turn and the start of the
+next inside a *single* caption — `So walk me through it. Sure, I read it first.`
+No amount of reattributing captions separates those, because they are one
+caption. So the caption itself has to divide first.
+
+In edit mode, put the cursor where the handover happens and press **⌘⏎**
+(`Ctrl+Enter`). The caption becomes two, the second half gets focus on its speaker
+field, and you say who said it. `1 2 1 2` then carries on as before.
+
+The boundary time is interpolated across the caption from where you cut, the same
+estimate the reader uses for a quote — an estimate, but close enough that playing
+either half lands on the right words. Both halves keep the speaker label, so the
+file still re-parses as it did. The cut point travels with the text it was
+measured against, so it lands between the same two words even if the line has
+unsaved typing in it.
+
+Splitting is the one edit that changes the *number* of captions, which renumbers
+every caption after it. Quotes are re-anchored across that shift: a quote after
+the cut follows its caption, and a quote inside the split one lands in whichever
+half now holds its words — including a quote that straddles the cut, which ends up
+spanning both.
+
 **The original is preserved.** Before the first change to a transcript, it is
 copied to `<name>_original.vtt`. That copy is written once and never touched
 again, so it always holds the file as it came off Zoom regardless of how many
@@ -225,6 +249,10 @@ comment under whoever spoke before it — `s` breaks it into its captions so eac
 can be assigned separately, and `1 2 1 2` carries on. Splitting writes nothing:
 it only exposes the seams, and the assignment is what persists. The keys need a
 roster, so a transcript with no `NOTE speakers:` line has nothing to press.
+
+When two people share a *single* caption, exposing the seams is not enough —
+there is no seam. That case needs the caption cut, which is
+[⌘⏎ in edit mode](#cutting-a-caption-in-two).
 
 Once anyone is on the roster, **joining follows assignment**: only rostered
 speakers merge, and whatever label the transcript arrived with stays line by

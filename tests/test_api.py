@@ -176,3 +176,28 @@ def test_index_is_served(client):
     response = api.get("/")
     assert response.status_code == 200
     assert "<title>" in response.text
+
+
+def test_split_route_divides_a_caption_and_returns_the_session(client):
+    api, rec_id = client
+    text = "I can see it. Looks good on my end."
+
+    response = api.post(
+        f"/api/recordings/{rec_id}/cues/c3/split",
+        json={"offset": text.index("Looks"), "text": text},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cue_ids"] == ["c3", "c4"]
+
+    cues = {cue["id"]: cue["text"] for cue in body["recording"]["transcript"]["cues"]}
+    assert cues["c3"] == "I can see it."
+    assert cues["c4"] == "Looks good on my end."
+    assert cues["c5"] == "Great, thanks for confirming."
+
+
+def test_split_route_rejects_a_cut_with_nothing_on_one_side(client):
+    api, rec_id = client
+    response = api.post(f"/api/recordings/{rec_id}/cues/c3/split", json={"offset": 0})
+    assert response.status_code == 400
+    assert "both sides" in response.json()["detail"]

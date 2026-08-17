@@ -27,7 +27,7 @@ import tempfile
 from pathlib import Path
 
 from .models import Cue
-from .vtt import read_speakers, splice_cue, splice_speaker, write_roster
+from .vtt import read_speakers, splice_cue, splice_speaker, split_cue_block, write_roster
 
 
 class EditError(ValueError):
@@ -163,6 +163,63 @@ def apply_roster_edit(recording, entries: list[dict]) -> dict:
 
     recording.reload_transcript()
     return {"roster": recording.transcript.roster}
+
+
+def apply_cue_split(recording, cue_id: str, offset: int, against: str | None = None) -> dict:
+    """Cut one caption into two at a point inside its text.
+
+    The case this is for: Zoom puts the end of one person's turn and the start of
+    another's in a single caption. Reassigning whole cues cannot separate them,
+    so the caption has to become two before either half can be attributed.
+
+    The boundary time is interpolated across the caption, the same estimate the
+    reader uses for a quote -- honest about being an estimate, and close enough
+    that playing either half lands on the right words.
+    """
+    transcript = recording.transcript
+    cue: Cue | None = transcript.cue(cue_id)
+    if cue is None:
+        raise EditError("that line is not part of this transcript")
+
+    offset = int(offset)
+    if against is not None and against != cue.text:
+        # The caret was placed in the editor, whose text may differ from what is
+        # stored -- unsaved typing, or whitespace the file collapses. Carry the
+        # offset across that difference rather than cutting at the wrong word.
+        offset = remap_offset(against, cue.text, offset)
+
+    head = normalize_edit(cue.text[:offset])
+    tail = normalize_edit(cue.text[offset:])
+    if not head or not tail:
+        raise EditError("a split needs words on both sides of the cut")
+
+    part_index = cue.part_index
+    vtt_path = recording.part_files[part_index].vtt_path
+    at = cue.time_at_offset(offset)
+    # Never produce a zero-length half; a caption of no duration cannot be played.
+    at = min(max(at, cue.start + 0.001), cue.end - 0.001)
+
+    part = transcript.part(part_index)
+    backup_created = ensure_backup(vtt_path)
+    content = split_cue_block(
+        recording.sources[part_index], cue, offset, at, part.offset if part else 0.0
+    )
+    write_atomically(vtt_path, content)
+    recording.sources[part_index] = content
+    recording.reload_transcript()
+
+    raw_tail = cue.text[offset:]
+    touched = recording.store.remap_split(
+        cue.index, offset, len(head), len(raw_tail) - len(raw_tail.lstrip())
+    )
+
+    return {
+        "changed": True,
+        "cue_ids": [f"c{cue.index}", f"c{cue.index + 1}"],
+        "at": round(at, 3),
+        "backup_created": backup_created,
+        "highlights": touched,
+    }
 
 
 def apply_speaker_edit(

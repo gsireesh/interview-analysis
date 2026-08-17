@@ -315,6 +315,58 @@ class HighlightStore:
             self._write()
         return touched
 
+    def remap_split(
+        self, split_index: int, split_offset: int, head_len: int, tail_lead: int
+    ) -> list[dict]:
+        """Re-anchor quotes after one cue became two.
+
+        Splitting inserts a cue, and cue ids are positional, so every id after
+        the split shifts by one -- without this, a quote saved earlier in the
+        session would silently start pointing at its neighbour. Anchors inside
+        the split cue land in whichever half now contains their words.
+        """
+        def move(cue_id: str, offset: int) -> tuple[str, int]:
+            if not cue_id.startswith("c") or not cue_id[1:].isdigit():
+                return cue_id, offset
+            index = int(cue_id[1:])
+            if index > split_index:
+                return f"c{index + 1}", offset
+            if index < split_index:
+                return cue_id, offset
+            if offset < split_offset:
+                return cue_id, min(offset, head_len)
+            return f"c{split_index + 1}", max(0, offset - split_offset - tail_lead)
+
+        touched: list[dict] = []
+        for highlight in self._data["highlights"]:
+            start = move(highlight.get("start_cue_id", ""), int(highlight.get("start_char_offset") or 0))
+            end = move(highlight.get("end_cue_id", ""), int(highlight.get("end_char_offset") or 0))
+            if (start[0], start[1], end[0], end[1]) == (
+                highlight.get("start_cue_id"),
+                highlight.get("start_char_offset"),
+                highlight.get("end_cue_id"),
+                highlight.get("end_char_offset"),
+            ):
+                continue
+
+            highlight["start_cue_id"], highlight["start_char_offset"] = start
+            highlight["end_cue_id"], highlight["end_char_offset"] = end
+            try:
+                highlight.update(resolve_span(self.transcript, highlight))
+            except HighlightError:
+                continue
+            refreshed = self.transcript.text_between(
+                highlight["start_cue_id"], highlight["start_char_offset"],
+                highlight["end_cue_id"], highlight["end_char_offset"],
+            )
+            if refreshed:
+                highlight["text"] = refreshed
+            highlight["updated_at"] = _now()
+            touched.append(highlight)
+
+        self._write()
+        return touched
+
     def restamp(self) -> None:
         """Record the transcript's new digest after an edit, so it reads as current."""
         self._write()

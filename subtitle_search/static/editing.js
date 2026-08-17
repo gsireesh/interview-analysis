@@ -11,7 +11,7 @@
  */
 
 import { api, escapeHtml, formatTime } from "./util.js";
-import { applyHighlights, refreshChunk } from "./transcript.js";
+import { applyHighlights, offsetWithin, refreshChunk } from "./transcript.js";
 import { cue, seekAndPlay } from "./player.js";
 
 // Safari and Chrome support plaintext-only; fall back to sanitizing paste.
@@ -61,7 +61,7 @@ export function enterEdit(ctx, chunkIndex) {
   bar.className = "edit-bar";
   // Zoom attributes badly, so who said a line is as editable as what they said.
   bar.innerHTML =
-    `<span class="edit-bar__hint">Editing ${chunk.cue_ids.length} line${chunk.cue_ids.length === 1 ? "" : "s"} · Enter saves and moves on · Esc finishes</span>` +
+    `<span class="edit-bar__hint">Editing ${chunk.cue_ids.length} line${chunk.cue_ids.length === 1 ? "" : "s"} · Enter saves and moves on · \u2318\u21a9 splits the line at the cursor · Esc finishes</span>` +
     `<datalist id="known-speakers">${(ctx.data?.transcript?.speakers || [])
       .map((name) => `<option value="${escapeHtml(name)}"></option>`)
       .join("")}</datalist>` +
@@ -130,7 +130,10 @@ function bindLines(ctx, container) {
     const field = event.target.closest(".cue-line__text");
     if (!field) return;
 
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      splitAtCaret(ctx, field);
+    } else if (event.key === "Enter") {
       event.preventDefault();
       const rows = Array.from(container.querySelectorAll(".cue-line__text"));
       const next = rows[rows.indexOf(field) + 1];
@@ -196,6 +199,89 @@ async function commit(ctx, field) {
     field.textContent = item.text;
     ctx.notify(`Could not save that line: ${error.message}`, { kind: "warn", key: null });
   }
+}
+
+/** Where the caret sits in a line, measured in that line's own characters. */
+function caretOffset(field) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!field.contains(range.startContainer) && range.startContainer !== field) return null;
+  return offsetWithin(field, range.startContainer, range.startOffset);
+}
+
+/**
+ * Cut this caption in two at the caret.
+ *
+ * Zoom routinely puts the end of one person's turn and the start of another's in
+ * a single caption, and no amount of reattributing whole captions can separate
+ * them. So the caption itself has to divide first: put the caret at the handover
+ * and cut, then each half can be given its own speaker.
+ *
+ * The text the caret was measured against goes along with the offset, so the cut
+ * lands between the same two words even if this line has unsaved typing in it.
+ */
+async function splitAtCaret(ctx, field) {
+  const row = field.closest(".cue-line");
+  const cueId = row?.dataset.cueId;
+  if (!cueId) return;
+
+  const text = field.textContent;
+  const offset = caretOffset(field);
+  if (offset == null) return;
+  if (!text.slice(0, offset).trim() || !text.slice(offset).trim()) {
+    ctx.notify("Put the cursor between two words to split a line there.");
+    return;
+  }
+
+  // The pre-split text must not be saved over the two halves on the way out.
+  field.dataset.skip = "1";
+  row.classList.add("cue-line--saving");
+  try {
+    const result = await api(`/api/recordings/${ctx.recordingId}/cues/${cueId}/split`, {
+      method: "POST",
+      body: { offset, text },
+    });
+    if (result.backup_created) {
+      ctx.notify(`Original transcript saved as ${result.backup_created}.`);
+    }
+    for (const updated of result.highlights || []) {
+      const existing = ctx.highlights.find((h) => h.id === updated.id);
+      if (existing) Object.assign(existing, updated);
+    }
+    if (result.highlights?.length) ctx.onHighlightsChanged?.();
+
+    // Cue ids are positional, so the manual expansions have to move with them.
+    remapSplitCues(ctx, result.cue_ids);
+    // Land on the second half: it is the clause that was misfiled, so naming
+    // its speaker is the reason for the split in the first place.
+    ctx.onTranscriptChanged?.(result.recording, { keepEditingCue: result.cue_ids[1] });
+    const who = document.querySelector(
+      `.cue-line[data-cue-id="${result.cue_ids[1]}"] .cue-line__who`
+    );
+    if (who) {
+      who.focus();
+      who.select();
+    }
+  } catch (error) {
+    row.classList.remove("cue-line--saving");
+    delete field.dataset.skip;
+    ctx.notify(`Could not split that line: ${error.message}`, { kind: "warn", key: null });
+  }
+}
+
+/** Shift the manually-expanded cue ids past an inserted caption. */
+function remapSplitCues(ctx, [head, tail]) {
+  const at = Number(head.slice(1));
+  const moved = new Set();
+  for (const id of ctx.splitCues) {
+    const index = Number(id.slice(1));
+    moved.add(index > at ? `c${index + 1}` : id);
+  }
+  // Both halves stay open, so the split you just made is visible.
+  if (moved.has(head)) moved.add(tail);
+  ctx.splitCues.clear();
+  moved.forEach((id) => ctx.splitCues.add(id));
 }
 
 /** Say who actually said this line, and let the blocks reform around it. */

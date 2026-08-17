@@ -13,7 +13,13 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .editing import EditError, apply_cue_edit, apply_roster_edit, apply_speaker_edit
+from .editing import (
+    EditError,
+    apply_cue_edit,
+    apply_cue_split,
+    apply_roster_edit,
+    apply_speaker_edit,
+)
 from .highlights import COLORS, HighlightError
 from .library import (
     THEMES_FILENAME,
@@ -118,6 +124,26 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
                 status_code=500, detail=f"could not write the transcript: {exc}"
             ) from exc
         # Rostering changes what joins, so the reader takes the whole thing back.
+        return {**result, "recording": recording.payload()}
+
+    @app.post("/api/recordings/{recording_id}/cues/{cue_id}/split")
+    def split_cue(recording_id: str, cue_id: str, payload: dict = Body(...)) -> dict:
+        """Cut one caption in two, so two speakers in one block can be separated."""
+        recording = require(recording_id)
+        try:
+            result = apply_cue_split(
+                recording,
+                cue_id,
+                payload.get("offset", 0),
+                payload.get("text"),
+            )
+        except EditError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"could not write the transcript: {exc}"
+            ) from exc
+        # A split renumbers every later cue, so the reader takes the whole thing back.
         return {**result, "recording": recording.payload()}
 
     @app.patch("/api/recordings/{recording_id}/cues/{cue_id}/speaker")

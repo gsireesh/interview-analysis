@@ -5,6 +5,7 @@ import pytest
 from subtitle_search.editing import (
     EditError,
     apply_cue_edit,
+    apply_cue_split,
     apply_speaker_edit,
     backup_path,
     remap_offset,
@@ -449,3 +450,195 @@ def test_a_line_with_no_label_can_be_given_one(tmp_path):
     apply_speaker_edit(recording, "c1", "Rafael Ortiz")
     assert recording.transcript.cue("c1").speaker == "Rafael Ortiz"
     assert "Rafael Ortiz: A trailing clause" in (tmp_path / "meeting.vtt").read_text()
+
+
+# -- splitting a caption two people share ------------------------------
+
+# The failure this exists for: Zoom filed the end of one turn and the start of
+# the next under one label, so no reattribution can separate them.
+INTERMINGLED = """WEBVTT
+
+1
+00:00:00.000 --> 00:00:04.000
+Dana Whitfield: Thanks for making the time.
+
+2
+00:00:04.000 --> 00:00:14.000
+Dana Whitfield: So walk me through it. Sure, I read the whole thing first.
+
+3
+00:00:14.000 --> 00:00:20.000
+Dana Whitfield: And what breaks down there?
+"""
+
+
+@pytest.fixture
+def intermingled(tmp_path):
+    (tmp_path / "meeting.vtt").write_text(INTERMINGLED, encoding="utf-8")
+    write_mp4(tmp_path / "meeting.mp4", 30)
+    return open_recording(tmp_path)
+
+
+def _cut_before(recording, cue_id, word, **kwargs):
+    cue = recording.transcript.cue(cue_id)
+    return apply_cue_split(recording, cue_id, cue.text.index(word), **kwargs)
+
+
+def test_a_split_turns_one_caption_into_two(intermingled):
+    _cut_before(intermingled, "c1", "Sure")
+    texts = [cue.text for cue in intermingled.transcript.cues]
+    assert texts == [
+        "Thanks for making the time.",
+        "So walk me through it.",
+        "Sure, I read the whole thing first.",
+        "And what breaks down there?",
+    ]
+
+
+def test_both_halves_keep_the_label_so_the_file_re_parses(intermingled):
+    _cut_before(intermingled, "c1", "Sure")
+    reread = open_recording(intermingled.folder)
+    assert [cue.speaker for cue in reread.transcript.cues] == ["Dana Whitfield"] * 4
+
+
+def test_the_halves_meet_at_an_interpolated_boundary(intermingled):
+    result = _cut_before(intermingled, "c1", "Sure")
+    head, tail = intermingled.transcript.cue("c1"), intermingled.transcript.cue("c2")
+    assert head.start == 4.0
+    assert tail.end == 14.0
+    assert head.end == tail.start == result["at"]
+    # Two thirds of the words are in the tail, so the cut lands early in the cue.
+    assert 4.0 < result["at"] < 9.0
+
+
+def test_neither_half_can_be_empty(intermingled):
+    with pytest.raises(EditError):
+        apply_cue_split(intermingled, "c1", 0)
+    with pytest.raises(EditError):
+        apply_cue_split(intermingled, "c1", len(intermingled.transcript.cue("c1").text))
+
+
+def test_splitting_an_unknown_line_is_rejected(intermingled):
+    with pytest.raises(EditError):
+        apply_cue_split(intermingled, "c99", 5)
+
+
+def test_splitting_backs_up_the_original_first(intermingled):
+    result = _cut_before(intermingled, "c1", "Sure")
+    assert result["backup_created"] == "meeting_original.vtt"
+    assert backup_path(intermingled.folder / "meeting.vtt").read_text() == INTERMINGLED
+
+
+def test_untouched_captions_are_left_byte_identical(intermingled):
+    _cut_before(intermingled, "c1", "Sure")
+    written = (intermingled.folder / "meeting.vtt").read_text()
+    assert written.startswith("WEBVTT\n\n1\n00:00:00.000 --> 00:00:04.000\n")
+    assert "00:00:14.000 --> 00:00:20.000\nDana Whitfield: And what breaks down there?" in written
+
+
+def test_the_halves_can_then_be_given_different_speakers(intermingled):
+    """The point of the whole exercise."""
+    _cut_before(intermingled, "c1", "Sure")
+    apply_speaker_edit(intermingled, "c2", "Rafael Ortiz")
+    assert intermingled.transcript.cue("c1").speaker == "Dana Whitfield"
+    assert intermingled.transcript.cue("c2").speaker == "Rafael Ortiz"
+
+
+def test_the_offset_is_carried_across_unsaved_typing(intermingled):
+    """The caret sits in the editor's text, which may not match the saved line."""
+    edited = "So walk me through it, then. Sure, I read the whole thing first."
+    # 'Sure' is seven characters further along in the editor than in the file, so
+    # cutting at the raw offset would strand the end of the question in the tail.
+    apply_cue_split(intermingled, "c1", edited.index("Sure"), against=edited)
+    assert intermingled.transcript.cue("c1").text == "So walk me through it."
+    assert intermingled.transcript.cue("c2").text.startswith("Sure,")
+
+
+# -- quotes surviving a split ------------------------------------------
+
+
+def test_a_quote_after_the_split_still_covers_the_same_words(intermingled):
+    quote = _quote(intermingled, "c2", 4, 9)
+    assert quote["text"] == "what"
+
+    _cut_before(intermingled, "c1", "Sure")
+    assert quote["start_cue_id"] == "c3"
+    assert intermingled.transcript.cue("c3").text[4:9] == "what "
+    assert quote["text"].strip() == "what"
+
+
+def test_a_quote_before_the_split_is_untouched(intermingled):
+    quote = _quote(intermingled, "c0", 0, 6)
+    before = dict(quote)
+    _cut_before(intermingled, "c1", "Sure")
+    assert quote == before
+
+
+def test_a_quote_in_the_first_half_keeps_its_words(intermingled):
+    cue = intermingled.transcript.cue("c1")
+    start = cue.text.index("walk")
+    quote = _quote(intermingled, "c1", start, start + len("walk me through"))
+
+    _cut_before(intermingled, "c1", "Sure")
+    assert quote["start_cue_id"] == "c1"
+    assert quote["text"] == "walk me through"
+
+
+def test_a_quote_in_the_second_half_moves_to_the_new_caption(intermingled):
+    cue = intermingled.transcript.cue("c1")
+    start = cue.text.index("read the whole thing")
+    quote = _quote(intermingled, "c1", start, start + len("read the whole thing"))
+
+    _cut_before(intermingled, "c1", "Sure")
+    assert quote["start_cue_id"] == "c2"
+    assert quote["text"] == "read the whole thing"
+
+
+def test_a_quote_spanning_the_cut_still_covers_the_same_words(intermingled):
+    cue = intermingled.transcript.cue("c1")
+    start = cue.text.index("through it")
+    quote = _quote(intermingled, "c1", start, cue.text.index("read"))
+    assert quote["text"] == "through it. Sure, I"
+
+    _cut_before(intermingled, "c1", "Sure")
+    assert (quote["start_cue_id"], quote["end_cue_id"]) == ("c1", "c2")
+    assert quote["text"] == "through it. Sure, I"
+
+
+def test_a_split_moves_the_quote_times_with_the_captions(intermingled):
+    quote = _quote(intermingled, "c2", 0, 10)
+    was = quote["start_time"]
+    _cut_before(intermingled, "c1", "Sure")
+    assert quote["start_cue_id"] == "c3"
+    assert quote["start_time"] == was  # same caption, same place in the recording
+
+
+def test_the_transcript_does_not_read_as_stale_after_a_split(intermingled):
+    _quote(intermingled, "c0", 0, 6)
+    _cut_before(intermingled, "c1", "Sure")
+    assert not intermingled.store.stale
+
+
+def test_a_split_in_a_later_part_writes_that_file_own_timeline(tmp_path):
+    """Cue times are session times; a file's timestamps start from zero."""
+    (tmp_path / "GMT20240301-140000_Recording.vtt").write_text(EDITABLE)
+    write_mp4(tmp_path / "GMT20240301-140000_Recording.mp4", 60)
+    (tmp_path / "GMT20240301-141200_Recording.vtt").write_text(
+        "WEBVTT\n\n1\n00:00:02.000 --> 00:00:12.000\n"
+        "Rafael Ortiz: That is where we left it. Right, let us pick it up.\n"
+    )
+    write_mp4(tmp_path / "GMT20240301-141200_Recording.mp4", 30)
+
+    recording = open_recording(tmp_path)
+    cue = next(c for c in recording.transcript.cues if c.part_index == 1)
+    assert cue.start > 60  # sits well down the session timeline
+
+    apply_cue_split(recording, cue.id, cue.text.index("Right"))
+    written = (tmp_path / "GMT20240301-141200_Recording.vtt").read_text()
+    assert "00:00:02.000 --> 00:00:07.098" in written
+    assert "00:00:07.098 --> 00:00:12.000" in written
+
+    # And the session times still land where they did, one part along.
+    reread = open_recording(tmp_path)
+    halves = [c for c in reread.transcript.cues if c.part_index == 1]
+    assert [round(c.start, 3) for c in halves] == [cue.start, round(cue.start + 5.098, 3)]
