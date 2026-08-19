@@ -1,5 +1,7 @@
 /* Bits every page needs: the theme toggle and the toasts. */
 
+import { recall, remember } from "./util.js";
+
 const THEME_KEY = "subtitle-search:theme";
 const ORDER = ["auto", "light", "dark"];
 
@@ -8,7 +10,7 @@ const ORDER = ["auto", "light", "dark"];
 const LINGER = { info: 5000, warn: 11000, action: 15000 };
 
 export function applyStoredTheme() {
-  document.documentElement.dataset.theme = localStorage.getItem(THEME_KEY) || "auto";
+  document.documentElement.dataset.theme = recall(THEME_KEY, "auto");
 }
 
 export function bindThemeToggle(button) {
@@ -17,7 +19,7 @@ export function bindThemeToggle(button) {
     const current = document.documentElement.dataset.theme || "auto";
     const next = ORDER[(ORDER.indexOf(current) + 1) % ORDER.length];
     document.documentElement.dataset.theme = next;
-    localStorage.setItem(THEME_KEY, next);
+    remember(THEME_KEY, next);
   });
 }
 
@@ -45,7 +47,7 @@ export function notify(
   message,
   { kind = "info", key = null, action = null, sticky = false } = {}
 ) {
-  if (!host || (key && localStorage.getItem(key) === "dismissed")) return;
+  if (!host || (key && recall(key) === "dismissed")) return;
 
   const toast = document.createElement("div");
   toast.className = `toast toast--${kind === "warn" ? "warn" : "info"}`;
@@ -58,8 +60,10 @@ export function notify(
   toast.querySelector(".toast__text").textContent = message;
 
   const close = () => {
-    if (key) localStorage.setItem(key, "dismissed");
+    // Dismissing comes first: remembering that it was dismissed is the part that
+    // is allowed to fail, not the dismissing.
     toast.classList.add("toast--going");
+    if (key) remember(key, "dismissed");
     setTimeout(() => toast.remove(), 180);
   };
   toast.querySelector(".toast__close").addEventListener("click", close);

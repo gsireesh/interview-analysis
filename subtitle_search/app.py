@@ -50,6 +50,10 @@ from .timings import coverage, unmeasured
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+#: The HTML entry points. Held to the same revalidation rule as the scripts, so a
+#: page and its modules can never come from two different versions of the tool.
+PAGES = {"/", "/reader", "/themes"}
+
 
 #: Where the reloading server leaves the folder it was pointed at.
 #:
@@ -524,6 +528,24 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
     @app.get("/themes")
     def themes_page() -> FileResponse:
         return FileResponse(STATIC_DIR / "themes.html")
+
+    @app.middleware("http")
+    async def revalidate_assets(request: Request, call_next):
+        """Never let a page link a cached script against a newer one.
+
+        The frontend is ES modules importing each other by name. A browser holding
+        yesterday's ``util.js`` next to today's ``app.js`` does not degrade -- the
+        import fails to link and the *entire* module graph dies, so the page loads
+        and then does nothing at all, with an error that names no file. Asking for
+        revalidation on every asset makes that state unreachable; with ETags
+        already in place it costs one 304 per file.
+
+        Media is left alone: those are large, immutable, and range-requested.
+        """
+        response = await call_next(request)
+        if request.url.path.startswith("/static") or request.url.path in PAGES:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

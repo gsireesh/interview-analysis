@@ -8,7 +8,7 @@
  * READING without stopping playback, and a "Follow along" button re-attaches.
  */
 
-import { $, api, escapeHtml, formatTime } from "./util.js";
+import { $, api, escapeHtml, formatTime, recall, remember } from "./util.js";
 import {
   applyHighlights,
   cacheGeometry,
@@ -765,9 +765,9 @@ ctx.el.tabHighlights.addEventListener("click", () => ctx.showTab("highlights"));
 const THEME_KEY = "subtitle-search:theme";
 const applyTheme = (theme) => {
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem(THEME_KEY, theme);
+  remember(THEME_KEY, theme);
 };
-applyTheme(localStorage.getItem(THEME_KEY) || "auto");
+applyTheme(recall(THEME_KEY, "auto"));
 
 ctx.el.themeToggle.addEventListener("click", () => {
   const order = ["auto", "light", "dark"];

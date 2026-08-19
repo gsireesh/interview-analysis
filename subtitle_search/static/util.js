@@ -60,6 +60,22 @@ export function lastAtOrBefore(values, target) {
 
 
 /**
+ * Read a remembered preference, or fall back to the default.
+ *
+ * Reads throw for the same reasons writes do. A read that throws on load is worse
+ * than a write that throws on click, because it takes the rest of the page's
+ * setup with it -- so no stored preference is ever read directly.
+ */
+export function recall(key, fallback = null) {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+/**
  * Write a preference down, and carry on if it cannot be written.
  *
  * Storage can be unavailable or full -- private windows, a full origin quota --

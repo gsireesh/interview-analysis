@@ -8,7 +8,7 @@
  * picking the right file and converting to a position inside it happens here.
  */
 
-import { formatTime, remember } from "./util.js";
+import { formatTime, recall, remember } from "./util.js";
 
 const DOCK_KEY = "subtitle-search:dock";
 const HEIGHT_KEY = "subtitle-search:dockHeight";
@@ -25,7 +25,7 @@ function boundHeight(px) {
 function setStageHeight(px) {
   const bounded = boundHeight(px);
   document.documentElement.style.setProperty("--dock-height", `${bounded}px`);
-  localStorage.setItem(HEIGHT_KEY, String(bounded));
+  remember(HEIGHT_KEY, bounded);
   return bounded;
 }
 
@@ -34,7 +34,7 @@ function initResize(ctx) {
   const { dock, dockGrip, dockStage } = ctx.el;
   if (!dockGrip) return;
 
-  const stored = Number(localStorage.getItem(HEIGHT_KEY));
+  const stored = Number(recall(HEIGHT_KEY));
   setStageHeight(Number.isFinite(stored) && stored > 0 ? stored : window.innerHeight * 0.34);
 
   let dragging = false;
@@ -104,7 +104,7 @@ function partUrl(ctx, index) {
 
 /** The speed you last chose, or normal. */
 export function storedRate() {
-  const value = Number(localStorage.getItem(RATE_KEY));
+  const value = Number(recall(RATE_KEY));
   return Number.isFinite(value) && value > 0 ? value : 1;
 }
 
@@ -175,7 +175,7 @@ export function initPlayer(ctx) {
 
   // Whether you want the video showing is worth remembering between sessions.
   // A stored state from an older build may name one that no longer exists.
-  const stored = localStorage.getItem(DOCK_KEY);
+  const stored = recall(DOCK_KEY);
   const opening = stored === "expanded" && anyVideo ? "expanded" : "minimized";
   dock.dataset.state = states.includes(opening) ? opening : "minimized";
   syncDockLabel();
@@ -200,7 +200,7 @@ export function initPlayer(ctx) {
   dockToggle.addEventListener("click", () => {
     const next = states[(states.indexOf(dock.dataset.state) + 1) % states.length];
     dock.dataset.state = next;
-    localStorage.setItem(DOCK_KEY, next);
+    remember(DOCK_KEY, next);
     syncDockLabel();
   });
 
