@@ -75,8 +75,13 @@ let framed = false;
  * Free placement is the point of the plane and it is also how an area ends up
  * unreadable. This is the way to read it without giving up the arrangement that
  * made it unreadable -- the stored positions are untouched, and turning it off
- * puts everything back exactly where it was. It packs the same way the server's
- * tidy does, so it doubles as a preview of what tidying that area would commit.
+ * puts everything back exactly where it was.
+ *
+ * Packed by speaker and then by time, which is the other half of what it is
+ * for: an area laid out that way is one voice at a time in the order it was
+ * said, and you can see where the theme stops being one person's. It is the
+ * order the server tidies into as well, so this doubles as a preview of what
+ * tidying that area would commit.
  */
 let gridView = false;
 
@@ -304,19 +309,48 @@ function packHeight(count, width) {
   return area_head + rows * (card_h + card_gap) - card_gap + area_pad;
 }
 
-/** Cards in reading order -- the order tidy uses, so packing is stable. */
-function readingOrder(cards) {
-  const { card_h } = metrics();
-  return [...cards].sort(
-    (a, b) => Math.round(a.y / (card_h / 2)) - Math.round(b.y / (card_h / 2)) || a.x - b.x
-  );
+/**
+ * Where a card falls when an area is packed: by speaker, then by time.
+ *
+ * Who said it first, because a theme read down a column of one voice at a time
+ * is a theme you can argue with -- the same person's three remarks about trust
+ * sit together, and the place where somebody else takes over is visible. Then
+ * time, so each voice runs in the order it was said rather than in the order it
+ * happened to be dragged out.
+ *
+ * Quotes with nobody attributed sort last: they are the ones to fix, not the
+ * ones to read first. Recording only breaks ties, so that the same cards always
+ * come out in the same order.
+ *
+ * The server applies the same rule when it tidies an area for good. Two
+ * spellings of one sentence, kept in step by ``packing_key`` in library.py --
+ * which is the cheaper mistake, since the alternative is asking the server to
+ * re-sort on every redraw of a view that writes nothing at all.
+ */
+function packingKey(card) {
+  const quote = ctx.state.byRef.get(card.ref);
+  if (!quote) return [2, "", 0, ""];
+  const speaker = (quote.speaker || "").trim();
+  return [speaker ? 0 : 1, speaker.toLowerCase(), quote.start_time || 0, quote.recording_id || ""];
+}
+
+function packingOrder(cards) {
+  return [...cards].sort((a, b) => {
+    const ka = packingKey(a);
+    const kb = packingKey(b);
+    for (let i = 0; i < ka.length; i += 1) {
+      if (ka[i] < kb[i]) return -1;
+      if (ka[i] > kb[i]) return 1;
+    }
+    return 0;
+  });
 }
 
 /** Where an area's cards are drawn: as placed, or packed for grid view. */
 function laidOut(theme, cards) {
   if (!gridView) return cards;
   const columns = packColumns(theme.w);
-  return readingOrder(cards).map((card, index) => ({ ...card, ...packSlot(index, columns) }));
+  return packingOrder(cards).map((card, index) => ({ ...card, ...packSlot(index, columns) }));
 }
 
 /**
@@ -459,7 +493,7 @@ function areaMarkup(theme, cards) {
             <button class="icon-btn" data-act="play-theme" type="button"
                     title="Play every quote in this theme">▶</button>
             <button class="icon-btn" data-act="tidy" type="button"
-                    title="Pack these into a grid for good">⊞</button>
+                    title="Pack these by speaker, then time, for good">⊞</button>
             <button class="icon-btn" data-act="delete" type="button"
                     title="Delete this area">✕</button>
           </span>
@@ -1192,7 +1226,7 @@ function onKeyDown(event) {
   if (shift && gridView) {
     // Nothing to nudge: grid view is drawing the positions, not reading them.
     event.preventDefault();
-    ctx.notify("Grid view is on, so cards sit where it packs them. Turn it off to arrange by hand.");
+    ctx.notify("Grid view packs by speaker and time. Turn it off to arrange by hand.");
     return;
   }
   if (shift) {

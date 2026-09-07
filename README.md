@@ -549,8 +549,8 @@ arrangement is the analysis.
   taking a screenful of plane is a finished one in the way. Quotes can still be
   dropped on a rolled-up area — the theme is closed, not shut — and **Roll up
   all** does the lot, for seeing the shape of the whole study at once.
-- **⊞ tidy** packs one area's cards into a grid *and writes it*, for when free
-  placement has become a pile you no longer want.
+- **⊞ tidy** packs one area's cards by speaker and then time *and writes it*,
+  for when free placement has become a pile you no longer want.
 - Drag a card **back to the tray** to put it away. Only that card: other copies
   of the same quote stay where they are.
 - Drop a card on **bare canvas** to park it. It counts as dealt with — it leaves
@@ -581,10 +581,22 @@ placement is the point of the plane, and it is also how an area ends up
 unreadable; this is how to read it without giving up the arrangement that made it
 unreadable. Turning it off puts everything back exactly where it was.
 
-It packs the same way `⊞ tidy` does, so it doubles as a preview of what tidying
-an area would commit. While it is on, a drag inside one area does nothing — there
-is nowhere to put anything — but dragging *between* areas still moves a card, and
-lands it in a clear slot.
+It packs **by speaker, then by time**, which is the other half of what it is for.
+An area laid out that way is one voice at a time in the order it was said: the
+same person's three remarks about trust sit together, and the place where
+somebody else takes over is visible. A quote nobody is credited with sorts last,
+because those are the ones to fix rather than the ones to read first.
+
+`⊞ tidy` writes exactly that order, so grid view doubles as a preview of what
+tidying an area would commit — and because the order comes from the quotes and
+not from where they were dragged, tidying twice changes nothing.
+
+While grid view is on, a drag inside one area does nothing — there is nowhere to
+put anything — but dragging *between* areas still moves a card, and lands it in a
+clear slot.
+
+Speakers group across recordings, so if the same name interviews in all of them
+their quotes gather under it rather than staying with their sessions.
 
 ### Filters
 

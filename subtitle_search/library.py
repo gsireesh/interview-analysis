@@ -135,6 +135,37 @@ def _fits(count: int, width: float = AREA_W) -> float:
 _KEEP = object()
 
 
+def packing_key(quote: dict) -> tuple:
+    """Where a quote falls when an area is packed into a grid: speaker, then time.
+
+    Who said it first, because a theme read down a column of one voice at a time
+    is a theme you can argue with -- the same person's three remarks about trust
+    sit together, and the place where somebody else takes over is visible. Then
+    time, so each voice runs in the order it was said rather than in the order it
+    happened to be dragged out.
+
+    Quotes with nobody attributed sort last: they are the ones to fix, not the
+    ones to read first. Recording is the final tiebreak, and does nothing except
+    make the result the same every time it is computed.
+
+    The canvas applies the same rule to grid view, in JavaScript. Two spellings
+    of one sentence, which is the cheaper mistake: the alternative is asking the
+    server to re-sort on every redraw of a view that writes nothing at all.
+    """
+    speaker = str(quote.get("speaker") or "").strip()
+    return (
+        0 if speaker else 1,
+        speaker.lower(),
+        float(quote.get("start_time") or 0.0),
+        str(quote.get("recording_id") or ""),
+    )
+
+
+def packing_order(quotes: list[dict]) -> dict[str, tuple]:
+    """``packing_key`` for every quote in the library, by reference."""
+    return {quote["ref"]: packing_key(quote) for quote in quotes}
+
+
 def metrics() -> dict:
     """The canvas geometry the page needs, from the one place it is decided.
 
@@ -713,17 +744,29 @@ class ThemeStore:
         self._write()
         return self.state()
 
-    def tidy(self, theme_id: str) -> dict:
-        """Pack an area's cards back into a grid, and grow it to fit them.
+    def tidy(self, theme_id: str, ranking: dict[str, tuple] | None = None) -> dict:
+        """Pack an area's cards into a grid, and grow it to fit them.
 
         Free placement is the point of the canvas, and it is also how an area
         ends up with two cards on top of each other and a third off the bottom
         edge. This is the way back, per area, without undoing the sorting.
+
+        ``ranking`` is ``packing_order``: speaker, then time. Tidying is the
+        moment you have decided that where the cards happen to sit means
+        nothing, so it puts them in an order that means something instead of
+        preserving the arrangement you just gave up on. It is also the order grid
+        view draws, which is what lets that view be a true preview of this.
+
+        Without a ranking, position falls back to reading order -- an ordering
+        that at least does not shuffle a tidy area on a second press.
         """
         theme = self._require(theme_id)
         mine = [c for c in self._data["cards"] if c.get("theme_id") == theme_id]
-        # Reading order, so tidying twice does not shuffle anything.
-        mine.sort(key=lambda c: (round(c["y"] / (CARD_H / 2)), c["x"]))
+        if ranking:
+            # A card whose quote has gone sorts last; prune will take it shortly.
+            mine.sort(key=lambda c: ranking.get(c["ref"], (2, "", 0.0, "")))
+        else:
+            mine.sort(key=lambda c: (round(c["y"] / (CARD_H / 2)), c["x"]))
         theme["h"] = _fits(len(mine), theme["w"])
         columns = area_columns(theme["w"])
         for index, card in enumerate(mine):

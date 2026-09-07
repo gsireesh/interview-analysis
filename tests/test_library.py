@@ -644,6 +644,101 @@ def test_tidying_packs_an_area_and_grows_it_to_fit(client):
     assert set(theme["refs"]) == set(refs)
 
 
+def named(index: int, speaker: str, start: float, tags=()) -> dict:
+    """A quote with a speaker and a time worth sorting on."""
+    return {
+        **quote(index, list(tags)),
+        "speaker": speaker,
+        "start_time": start,
+        "end_time": start + 4,
+    }
+
+
+def test_tidying_orders_by_speaker_then_by_time(tmp_path):
+    """One voice at a time, each running in the order it was said.
+
+    A theme read that way is one you can argue with: the same person's remarks
+    sit together, and the place where somebody else takes over is visible.
+    """
+    root = tmp_path / "study"
+    make_recording(
+        root,
+        "P01",
+        [
+            named(1, "Rafael Ortiz", 90.0),
+            named(2, "Dana Whitfield", 30.0),
+            named(3, "Rafael Ortiz", 10.0),
+            named(4, "Dana Whitfield", 60.0),
+        ],
+    )
+    registry = RecordingRegistry()
+    registry.add_library(root)
+    api = TestClient(create_app(registry))
+
+    theme = api.post("/api/library/themes", json={"title": "T"}).json()["theme"]
+    quotes = api.get("/api/library/quotes").json()["quotes"]
+    by_ref = {q["ref"]: q for q in quotes}
+    # Placed in a deliberately unhelpful order, and scattered.
+    for offset, ref in enumerate(reversed([q["ref"] for q in quotes])):
+        api.post(
+            "/api/library/canvas/place",
+            json={"ref": ref, "theme_id": theme["id"], "x": 200 - offset * 30, "y": 300 - offset * 20},
+        )
+
+    body = api.post("/api/library/canvas/tidy", json={"theme_id": theme["id"]}).json()
+    packed = sorted(body["cards"], key=lambda c: (c["y"], c["x"]))
+    assert [
+        (by_ref[c["ref"]]["speaker"], by_ref[c["ref"]]["start_time"]) for c in packed
+    ] == [
+        ("Dana Whitfield", 30.0),
+        ("Dana Whitfield", 60.0),
+        ("Rafael Ortiz", 10.0),
+        ("Rafael Ortiz", 90.0),
+    ]
+
+
+def test_a_quote_nobody_is_credited_with_packs_last(tmp_path):
+    """Unattributed quotes are the ones to fix, not the ones to read first."""
+    root = tmp_path / "study"
+    make_recording(
+        root,
+        "P01",
+        [
+            {**named(1, "", 5.0), "speaker": None},
+            named(2, "Zoe Nakamura", 99.0),
+            named(3, "Dana Whitfield", 50.0),
+        ],
+    )
+    registry = RecordingRegistry()
+    registry.add_library(root)
+    api = TestClient(create_app(registry))
+
+    theme = api.post("/api/library/themes", json={"title": "T"}).json()["theme"]
+    by_ref = {q["ref"]: q for q in api.get("/api/library/quotes").json()["quotes"]}
+    for ref in by_ref:
+        api.post("/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"]})
+
+    body = api.post("/api/library/canvas/tidy", json={"theme_id": theme["id"]}).json()
+    packed = sorted(body["cards"], key=lambda c: (c["y"], c["x"]))
+    assert [by_ref[c["ref"]]["speaker"] for c in packed] == [
+        "Dana Whitfield",
+        "Zoe Nakamura",
+        None,
+    ]
+
+
+def test_tidying_twice_changes_nothing(client):
+    """The order comes from the quotes, so it does not depend on where they were."""
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "T"}).json()["theme"]
+    for ref in refs_of(api)[:4]:
+        api.post("/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"]})
+
+    once = api.post("/api/library/canvas/tidy", json={"theme_id": theme["id"]}).json()["cards"]
+    twice = api.post("/api/library/canvas/tidy", json={"theme_id": theme["id"]}).json()["cards"]
+    assert once == twice
+
+
 def test_positions_are_saved_in_one_batch(client):
     api, _ = client
     theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]

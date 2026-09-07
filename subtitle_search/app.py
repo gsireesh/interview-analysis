@@ -32,6 +32,7 @@ from .library import (
     all_quotes,
     cooccurrence,
     metrics as canvas_metrics,
+    packing_order,
     tag_index,
     untagged,
     vocabulary,
@@ -487,12 +488,17 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
 
     @app.post("/api/library/canvas/tidy")
     def tidy_area(payload: dict = Body(...)) -> dict:
-        """Pack one area's cards back into a grid, and grow it to fit them."""
+        """Pack one area's cards into a grid by speaker and time, and grow it to fit.
+
+        The order lives with the quotes, not with the themes, so the corpus is
+        read here and handed down -- the theme store knows references and boxes
+        and has never needed to know who said anything.
+        """
         theme_id = _theme_id(payload)
         if theme_id is None:
             raise HTTPException(status_code=400, detail="a theme is required")
         try:
-            return themes().tidy(theme_id)
+            return themes().tidy(theme_id, packing_order(corpus()))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="unknown theme") from exc
 
