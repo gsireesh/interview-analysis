@@ -2226,11 +2226,47 @@ mark.hl--noted::after {
 
 .area--moving .area__chrome { cursor: grabbing; }
 
+/* Somewhere to pick a theme up.
+ *
+ * The bar it sits on turned out to be almost entirely controls: the title is a
+ * field, the note is a field, the rest are buttons, and every one of those keeps
+ * its own job on a press. That left the few pixels of padding between them as
+ * the only place an area could be grabbed, which is not a handle, it is a
+ * knack. This strip runs the full width of the bar and is never anything else,
+ * so there is always somewhere obvious to take hold of.
+ *
+ * It does not scale, like the rest of the bar, so it is the same easy target at
+ * any zoom -- which is when you most want it, since zooming out is how you find
+ * the area you meant to move somewhere else. */
+.area__grab {
+  display: block;
+  height: 14px;
+  cursor: grab;
+  border-radius: 2px 2px 0 0;
+}
+
+/* The cue is a small pill in the middle; the target is the whole strip. */
+.area__grab::after {
+  content: "";
+  display: block;
+  width: 26px;
+  height: 3px;
+  margin: 5px auto;
+  border-radius: 2px;
+  background: var(--rule);
+}
+
+.area__grab:hover::after { background: var(--ink-faint); }
+.area--moving .area__grab { cursor: grabbing; }
+.area--moving .area__grab::after { background: var(--marker); }
+
 .area__head {
   display: flex;
   align-items: flex-start;
   gap: 0.375rem;
-  padding: 8px 10px 2px;
+  /* The strip above provides the separation the top padding used to, so the bar
+     grows by less than the handle costs. */
+  padding: 2px 10px 2px;
 }
 
 .area__head .icon-btn, .area__count { margin-top: 1px; }
@@ -2294,7 +2330,7 @@ mark.hl--noted::after {
 .area--tight .area__sub { display: none; }
 /* Every pixel the bar gives back is a pixel of the first card row it stops
    covering, so tight mode also trims its own padding. */
-.area--tight .area__head { padding: 5px 8px 4px; }
+.area--tight .area__head { padding: 2px 8px 4px; }
 .area--cramped .area__count { display: none; }
 
 .area__chrome .icon-btn { font-size: 11px; padding: 2px 4px; }

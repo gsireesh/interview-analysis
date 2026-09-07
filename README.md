@@ -534,9 +534,13 @@ arrangement is the analysis.
   where it was said. Deciding which theme a quote belongs to means reading it,
   and a truncated list makes you drag each one out to find out what it says —
   which is the decision, done backwards.
-- Drag an area **by its title bar** and its quotes travel with it. Card
-  positions are stored relative to their area, so this is two numbers changing
-  and nothing can be left behind.
+- Drag an area **by the strip across the top of its title bar** and its quotes
+  travel with it. Card positions are stored relative to their area, so this is
+  two numbers changing and nothing can be left behind. The strip exists because
+  the bar is otherwise almost all controls — the title is a field, the note is a
+  field, the rest are buttons — which left the padding between them as the only
+  place to take hold of, and that is a knack rather than a handle. Like the rest
+  of the bar it does not scale, so it is the same easy target at any zoom.
 - **Resize** from the bottom-right corner. Cards a smaller box no longer covers
   are pulled back inside rather than evicted — a quote does not stop being part
   of a theme because you dragged the box in.

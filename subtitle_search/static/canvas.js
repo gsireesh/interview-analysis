@@ -440,6 +440,7 @@ function areaMarkup(theme, cards) {
                height === null ? "" : `; height:${height}px`
              }">
       <div class="area__chrome" data-handle="move">
+        <span class="area__grab" title="Drag to move this theme"></span>
         <header class="area__head">
           <button class="icon-btn area__roll" data-act="collapse" type="button"
                   aria-expanded="${theme.collapsed ? "false" : "true"}"
