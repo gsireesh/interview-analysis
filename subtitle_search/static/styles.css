@@ -2311,7 +2311,8 @@ mark.hl--noted::after {
   padding: 1px 6px;
 }
 
-.area__tools { display: flex; gap: 1px; margin-left: auto; flex: none; }
+/* On the title row, because it is the row that never goes away. */
+.area__tools { display: flex; gap: 1px; flex: none; margin-top: 1px; }
 
 .area__sub {
   display: flex;
@@ -2320,18 +2321,23 @@ mark.hl--noted::after {
   padding: 0 10px 5px;
 }
 
+.area__sub .area__spread { margin-left: auto; }
+
 .area__spread { font-family: var(--mono); font-size: 9px; color: var(--ink-faint); flex: none; }
 
-/* Out of room. The name has its own row and keeps it; the note, the spread and
-   the buttons share the second one and are what pay. Losing that row also pulls
-   the bar back inside the space reserved for it, so it stops covering the first
-   row of cards -- the two problems have one cure. Narrower still and the count
-   goes too, leaving the name the whole bar. */
+/* Out of room, and this is the order things are given up in.
+   
+   The note and the recording spread go first -- losing that row also pulls the
+   bar back inside the space reserved for it, so it stops covering the first row
+   of cards, and the two problems have one cure. Then the count. The buttons go
+   last and only on a bar too narrow to press one, because a control you can
+   never see is worse than a name that wraps to three lines. */
 .area--tight .area__sub { display: none; }
 /* Every pixel the bar gives back is a pixel of the first card row it stops
    covering, so tight mode also trims its own padding. */
 .area--tight .area__head { padding: 2px 8px 4px; }
 .area--cramped .area__count { display: none; }
+.area--bare .area__tools { display: none; }
 
 .area__chrome .icon-btn { font-size: 11px; padding: 2px 4px; }
 

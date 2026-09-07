@@ -131,10 +131,13 @@ function applyView() {
   rememberView();
 }
 
-//: Screen widths at which a title bar gives something up. Measured, not
-//: guessed: what fits depends on the area's width *and* the zoom.
+//: Screen widths at which a title bar gives something up, in the order it gives
+//: them. Measured rather than guessed: what fits depends on the area's width
+//: *and* the zoom, and an area seen at 45% is only a couple of hundred pixels
+//: across however wide it is on the plane.
 const TIGHT = 340;
-const CRAMPED = 210;
+const CRAMPED = 250;
+const BARE = 190;
 
 /**
  * Make room for the theme's name by dropping everything less important.
@@ -144,10 +147,16 @@ const CRAMPED = 210;
  * what you navigate by, and a row of half-truncated titles is the failure this
  * whole arrangement was meant to avoid.
  *
- * The name has its own row for that reason, sharing it with nothing but the
- * roll-up arrow and the count. Everything else -- the note, the recording
- * spread, the buttons -- is on a second row that goes when there is no width for
- * it, which also brings the bar back inside the room reserved for it and stops
+ * The name does not need a row to itself to be safe, though, which is what the
+ * first version of this assumed. It wraps, and the area grows to hold it, so a
+ * narrow bar costs it a line rather than its ending. What it needed was for the
+ * *buttons* to stay put: they were on the second row, that row goes below 340px,
+ * and an area seen at the zoom this page opens at is about 230px across -- so
+ * tidy and delete were, in practice, never on screen at all.
+ *
+ * So the order of sacrifice is: the note and the recording spread, then the
+ * count, and only on a bar too narrow to press anything, the buttons. Losing the
+ * second row also pulls the bar back inside the room reserved for it and stops
  * it covering the top row of cards. Zooming in brings it all back.
  */
 function fitChrome() {
@@ -155,6 +164,7 @@ function fitChrome() {
     const width = node.offsetWidth * view.z;
     node.classList.toggle("area--tight", width < TIGHT);
     node.classList.toggle("area--cramped", width < CRAMPED);
+    node.classList.toggle("area--bare", width < BARE);
   }
   fitTitles();
 
@@ -484,19 +494,19 @@ function areaMarkup(theme, cards) {
                     spellcheck="false" aria-label="Theme name"
                     >${escapeHtml(theme.title)}</textarea>
           <span class="area__count" title="quotes in this theme">${cards.length}</span>
+          <span class="area__tools">
+            <button class="icon-btn" data-act="play-theme" type="button"
+                    title="Play every quote in this theme">▶</button>
+            <button class="icon-btn" data-act="tidy" type="button"
+                    title="Tidy: pack these by speaker, then time, for good">⊞</button>
+            <button class="icon-btn" data-act="delete" type="button"
+                    title="Delete this area">✕</button>
+          </span>
         </header>
         <div class="area__sub">
           <input class="area__note" value="${escapeHtml(theme.note || "")}" data-act="note"
                  placeholder="What is this theme?" aria-label="What this theme is">
           <span class="area__spread">${spread.size}/${ctx.state.recordings.size} rec</span>
-          <span class="area__tools">
-            <button class="icon-btn" data-act="play-theme" type="button"
-                    title="Play every quote in this theme">▶</button>
-            <button class="icon-btn" data-act="tidy" type="button"
-                    title="Pack these by speaker, then time, for good">⊞</button>
-            <button class="icon-btn" data-act="delete" type="button"
-                    title="Delete this area">✕</button>
-          </span>
         </div>
       </div>
       ${shown

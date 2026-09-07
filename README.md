@@ -568,7 +568,8 @@ by, and a plane whose labels go illegible exactly when you zoom out to see all o
 them has given up the thing it was for.
 
 Holding that costs the bar some room, so it gives up its parts in order: the note
-and the recording spread go first, then the count, and the name keeps the width.
+and the recording spread go first, then the count, and last of all — only on a
+bar too narrow to press anything — the ▶ ⊞ ✕ buttons. The name keeps the width.
 A long name wraps rather than being cut off, and only shrinks — never below 9px —
 when a single word is wider than the whole area, which happens below about a
 quarter zoom. Zoomed out far enough, an area becomes a labelled tile, which is
