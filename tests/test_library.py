@@ -7,6 +7,10 @@ from fastapi.testclient import TestClient
 
 from subtitle_search.app import create_app
 from subtitle_search.library import (
+    AREA_HEAD,
+    AREA_PAD,
+    CARD_H,
+    CARD_W,
     THEMES_FILENAME,
     ThemeStore,
     all_quotes,
@@ -338,6 +342,598 @@ def test_assigning_to_an_unknown_theme_is_a_404(client):
 def test_assigning_without_a_reference_is_a_400(client):
     api, _ = client
     assert api.post("/api/library/themes/assign", json={}).status_code == 400
+
+
+# -- the canvas ---------------------------------------------------------
+#
+# The canvas is the same themes on a plane. What these check is the part a
+# column list never had to answer: that positions survive, that an area carries
+# its quotes when it moves, and that a card -- not a quote -- is the thing being
+# placed, which is what lets one quote sit in two themes.
+
+
+def refs_of(api):
+    return [q["ref"] for q in api.get("/api/library/quotes").json()["quotes"]]
+
+
+def overlapping(cards):
+    """Any two cards close enough to hide each other."""
+    return any(
+        abs(a["x"] - b["x"]) < CARD_W and abs(a["y"] - b["y"]) < CARD_H
+        for i, a in enumerate(cards)
+        for b in cards[i + 1 :]
+    )
+
+
+def test_the_canvas_page_offers_both_shapes(client):
+    api, _ = client
+    page = api.get("/themes").text
+    assert 'id="view-canvas"' in page
+    assert 'id="view-board"' in page
+    assert 'data-mode="canvas"' in page
+
+
+def test_a_themes_file_from_before_the_canvas_is_laid_out_on_it(tmp_path, library):
+    """The old file records membership and no positions. It must not open empty.
+
+    Re-sorting work that was already sorted is the one outcome that would make
+    the canvas worse than the board it replaces, so the first read places the
+    themes and packs each one's quotes inside its area.
+    """
+    registry = RecordingRegistry()
+    registry.add_library(library)
+    refs = [q["ref"] for q in all_quotes(registry)]
+
+    path = library / THEMES_FILENAME
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "themes": [
+                    {"id": "t1", "title": "Old", "note": "", "color": None, "refs": refs[:3]},
+                    {"id": "t2", "title": "Empty", "note": "", "color": None, "refs": []},
+                ],
+            }
+        )
+    )
+
+    store = ThemeStore(path)
+    themes = {t["id"]: t for t in store.list()}
+    assert all(isinstance(themes["t1"][key], float) for key in ("x", "y", "w", "h"))
+    # The two areas are laid side by side rather than on top of each other.
+    assert themes["t1"]["x"] != themes["t2"]["x"] or themes["t1"]["y"] != themes["t2"]["y"]
+
+    cards = store.cards()
+    assert {c["ref"] for c in cards} == set(refs[:3])
+    assert all(c["theme_id"] == "t1" for c in cards)
+    assert not overlapping(cards)
+    # Nothing sits over the area's own title.
+    assert all(c["y"] >= AREA_HEAD and c["x"] >= AREA_PAD for c in cards)
+
+    # And it was written down, so the next read is not a second layout.
+    again = ThemeStore(path)
+    assert [(c["ref"], c["x"], c["y"]) for c in again.cards()] == [
+        (c["ref"], c["x"], c["y"]) for c in cards
+    ]
+
+
+def test_placing_a_quote_puts_a_card_where_it_was_dropped(client):
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "Trust"}).json()["theme"]
+    ref = refs_of(api)[0]
+
+    body = api.post(
+        "/api/library/canvas/place",
+        json={"ref": ref, "theme_id": theme["id"], "x": 40, "y": 120},
+    ).json()
+
+    assert body["cards"] == [{"ref": ref, "theme_id": theme["id"], "x": 40.0, "y": 120.0}]
+    assert body["themes"][0]["refs"] == [ref]
+    assert body["placed"] == [ref]
+    assert body["on_canvas"] == [ref]
+
+
+def test_a_card_dropped_on_bare_canvas_is_on_it_without_being_in_a_theme(client):
+    """Parked next to an area, not in it -- a quote you have dealt with but not filed.
+
+    The board and the tray disagree about such a quote on purpose: the board
+    calls it unsorted, and the tray stops offering it.
+    """
+    api, _ = client
+    ref = refs_of(api)[0]
+    body = api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": None, "x": 900, "y": 40}
+    ).json()
+
+    assert body["cards"] == [{"ref": ref, "theme_id": None, "x": 900.0, "y": 40.0}]
+    assert body["placed"] == []
+    assert body["on_canvas"] == [ref]
+
+
+def test_dragging_a_card_between_areas_moves_it(client):
+    api, _ = client
+    first = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    second = api.post("/api/library/themes", json={"title": "Two"}).json()["theme"]
+    ref = refs_of(api)[0]
+
+    api.post(
+        "/api/library/canvas/place",
+        json={"ref": ref, "theme_id": first["id"], "x": 20, "y": 100},
+    )
+    body = api.post(
+        "/api/library/canvas/place",
+        json={
+            "ref": ref,
+            "theme_id": second["id"],
+            "x": 30,
+            "y": 110,
+            "moved_from": first["id"],
+        },
+    ).json()
+
+    assert len(body["cards"]) == 1
+    assert body["cards"][0]["theme_id"] == second["id"]
+    by_id = {t["id"]: t for t in body["themes"]}
+    assert by_id[first["id"]]["refs"] == []
+    assert by_id[second["id"]]["refs"] == [ref]
+
+
+def test_the_same_quote_can_be_pinned_in_two_areas(client):
+    """A card is one appearance of a quote, so a quote can appear twice.
+
+    Saying nothing about where the card came from is the copy gesture -- what you
+    would do with a photocopier and two walls.
+    """
+    api, _ = client
+    first = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    second = api.post("/api/library/themes", json={"title": "Two"}).json()["theme"]
+    ref = refs_of(api)[0]
+
+    api.post(
+        "/api/library/canvas/place",
+        json={"ref": ref, "theme_id": first["id"], "x": 20, "y": 100},
+    )
+    body = api.post(
+        "/api/library/canvas/place",
+        json={"ref": ref, "theme_id": second["id"], "x": 20, "y": 100},
+    ).json()
+
+    assert len(body["cards"]) == 2
+    by_id = {t["id"]: t for t in body["themes"]}
+    assert by_id[first["id"]]["refs"] == [ref]
+    assert by_id[second["id"]]["refs"] == [ref]
+    # One quote, however many cards: the counts are of quotes.
+    assert body["placed"] == [ref]
+    assert body["on_canvas"] == [ref]
+
+
+def test_only_one_card_per_quote_per_area(client):
+    """Placing into somewhere it already is moves it, rather than stacking it."""
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    ref = refs_of(api)[0]
+
+    api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"], "x": 20, "y": 100}
+    )
+    body = api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"], "x": 60, "y": 200}
+    ).json()
+
+    assert body["cards"] == [{"ref": ref, "theme_id": theme["id"], "x": 60.0, "y": 200.0}]
+
+
+def test_putting_a_card_away_leaves_the_other_copies(client):
+    api, _ = client
+    first = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    second = api.post("/api/library/themes", json={"title": "Two"}).json()["theme"]
+    ref = refs_of(api)[0]
+    for theme in (first, second):
+        api.post(
+            "/api/library/canvas/place",
+            json={"ref": ref, "theme_id": theme["id"], "x": 20, "y": 100},
+        )
+
+    body = api.post(
+        "/api/library/canvas/unplace", json={"ref": ref, "theme_id": first["id"]}
+    ).json()
+
+    assert [c["theme_id"] for c in body["cards"]] == [second["id"]]
+    assert body["on_canvas"] == [ref]
+
+
+def test_a_quote_placed_with_no_position_lands_clear_of_what_is_there(client):
+    """The board has no coordinates to offer, and must not stack cards blind.
+
+    Free placement means a slot can be empty of any card's corner and still be
+    entirely underneath one, so the search is for a clear box rather than an
+    unused grid point.
+    """
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    refs = refs_of(api)[:3]
+
+    # Two cards placed by hand, deliberately off the grid.
+    api.post(
+        "/api/library/canvas/place",
+        json={"ref": refs[0], "theme_id": theme["id"], "x": 20, "y": 90},
+    )
+    api.post(
+        "/api/library/canvas/place",
+        json={"ref": refs[1], "theme_id": theme["id"], "x": 250, "y": 95},
+    )
+    # And one arriving from the board, saying nothing about where.
+    body = api.post(
+        "/api/library/canvas/place", json={"ref": refs[2], "theme_id": theme["id"]}
+    ).json()
+
+    assert not overlapping(body["cards"])
+    assert len(body["cards"]) == 3
+
+
+def test_moving_an_area_carries_its_quotes(client):
+    """Card positions are relative to the area, which is what makes this free.
+
+    Moving an area is two numbers changing. No card can be left behind, because
+    nothing about the cards is touched.
+    """
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    ref = refs_of(api)[0]
+    api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"], "x": 40, "y": 120}
+    )
+
+    moved = api.post(
+        "/api/library/canvas/reshape", json={"theme_id": theme["id"], "x": 1500, "y": 900}
+    ).json()["theme"]
+    assert (moved["x"], moved["y"]) == (1500.0, 900.0)
+
+    cards = api.get("/api/library/themes").json()["cards"]
+    assert cards == [{"ref": ref, "theme_id": theme["id"], "x": 40.0, "y": 120.0}]
+
+
+def test_shrinking_an_area_pulls_its_quotes_back_inside(client):
+    """A quote does not stop being in a theme because the box was dragged in."""
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    ref = refs_of(api)[0]
+    api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"], "x": 260, "y": 240}
+    )
+
+    small = api.post(
+        "/api/library/canvas/reshape", json={"theme_id": theme["id"], "w": 280, "h": 240}
+    ).json()["theme"]
+
+    body = api.get("/api/library/themes").json()
+    card = body["cards"][0]
+    assert body["themes"][0]["refs"] == [ref]
+    assert AREA_PAD <= card["x"] <= small["w"] - AREA_PAD - CARD_W
+    assert AREA_HEAD <= card["y"] <= max(AREA_HEAD, small["h"] - AREA_PAD - CARD_H)
+
+
+def test_an_area_cannot_be_shrunk_smaller_than_a_card(client):
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    tiny = api.post(
+        "/api/library/canvas/reshape", json={"theme_id": theme["id"], "w": 1, "h": 1}
+    ).json()["theme"]
+    assert tiny["w"] >= CARD_W and tiny["h"] >= CARD_H
+
+
+def test_tidying_packs_an_area_and_grows_it_to_fit(client):
+    """The way back from a mess, per area, without undoing the sorting."""
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    refs = refs_of(api)[:4]
+    # All on the same spot, which free placement allows and nobody wants.
+    for ref in refs:
+        api.post(
+            "/api/library/canvas/place",
+            json={"ref": ref, "theme_id": theme["id"], "x": 30, "y": 100},
+        )
+
+    body = api.post("/api/library/canvas/tidy", json={"theme_id": theme["id"]}).json()
+    cards = body["cards"]
+    theme = body["themes"][0]
+
+    assert len(cards) == len(refs)
+    assert not overlapping(cards)
+    assert all(c["y"] + CARD_H <= theme["h"] - AREA_PAD + 0.01 for c in cards)
+    assert set(theme["refs"]) == set(refs)
+
+
+def test_positions_are_saved_in_one_batch(client):
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    refs = refs_of(api)[:2]
+    for ref in refs:
+        api.post(
+            "/api/library/canvas/place",
+            json={"ref": ref, "theme_id": theme["id"], "x": 20, "y": 100},
+        )
+
+    body = api.post(
+        "/api/library/canvas/positions",
+        json={
+            "moves": [
+                {"ref": refs[0], "theme_id": theme["id"], "x": 100, "y": 200},
+                {"ref": refs[1], "theme_id": theme["id"], "x": 30, "y": 100},
+                {"ref": "nothing:here", "theme_id": theme["id"], "x": 1, "y": 2},
+            ]
+        },
+    ).json()
+
+    positions = {c["ref"]: (c["x"], c["y"]) for c in body["cards"]}
+    assert positions == {refs[0]: (100.0, 200.0), refs[1]: (30.0, 100.0)}
+
+
+def test_a_card_cannot_be_repositioned_outside_its_own_area(client):
+    """The invariant is held at every write, not only checked on the way in."""
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    ref = refs_of(api)[0]
+    api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"], "x": 20, "y": 100}
+    )
+
+    body = api.post(
+        "/api/library/canvas/positions",
+        json={"moves": [{"ref": ref, "theme_id": theme["id"], "x": 9000, "y": 9000}]},
+    ).json()
+
+    card, area = body["cards"][0], body["themes"][0]
+    assert card["x"] == area["w"] - AREA_PAD - CARD_W
+    assert card["y"] == area["h"] - AREA_PAD - CARD_H
+
+
+def test_an_area_out_of_room_grows_rather_than_stacking(client):
+    """Squeezing an arriving card back inside would put it on top of something."""
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    height = theme["h"]
+
+    for ref in refs_of(api):
+        api.post("/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"]})
+    body = api.get("/api/library/themes").json()
+
+    grown = body["themes"][0]
+    assert grown["h"] > height
+    assert not overlapping(body["cards"])
+    assert all(c["y"] + CARD_H <= grown["h"] - AREA_PAD + 0.01 for c in body["cards"])
+
+
+def test_nonsense_coordinates_cannot_strand_a_card(client):
+    """A bad number must not put a card where no amount of panning finds it."""
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    ref = refs_of(api)[0]
+
+    body = api.post(
+        "/api/library/canvas/place",
+        json={"ref": ref, "theme_id": theme["id"], "x": "over there", "y": 1e12},
+    ).json()
+
+    # Unusable x falls back to the free slot it would have got with no position
+    # at all; a wild y lands inside the area rather than a mile below it.
+    card = body["cards"][0]
+    area = body["themes"][0]
+    assert (card["x"], card["y"]) == (
+        AREA_PAD,
+        max(AREA_HEAD, area["h"] - AREA_PAD - CARD_H),
+    )
+
+
+def test_deleting_an_area_returns_its_quotes_to_the_tray(client):
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "One"}).json()["theme"]
+    ref = refs_of(api)[0]
+    api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"], "x": 20, "y": 100}
+    )
+
+    api.delete(f"/api/library/themes/{theme['id']}")
+    body = api.get("/api/library/themes").json()
+
+    assert body["cards"] == []
+    assert body["on_canvas"] == []
+
+
+def test_an_area_can_be_recreated_with_its_arrangement(client):
+    """What undo needs: the box, the note and where each quote sat, in one call.
+
+    The arrangement inside an area is the part that took the time, so an undo
+    that restored the title and scrambled the contents would not be an undo.
+    """
+    api, _ = client
+    refs = refs_of(api)[:2]
+    restored = api.post(
+        "/api/library/themes",
+        json={
+            "title": "Put back",
+            "note": "why it matters",
+            "box": {"x": 300, "y": 400, "w": 600, "h": 500},
+            "cards": [
+                {"ref": refs[0], "x": 20, "y": 100},
+                {"ref": refs[1], "x": 300, "y": 260},
+            ],
+        },
+    ).json()
+
+    theme = restored["theme"]
+    assert (theme["x"], theme["y"], theme["w"], theme["h"]) == (300.0, 400.0, 600.0, 500.0)
+    assert theme["note"] == "why it matters"
+    assert set(theme["refs"]) == set(refs)
+    assert {(c["ref"], c["x"], c["y"]) for c in restored["cards"]} == {
+        (refs[0], 20.0, 100.0),
+        (refs[1], 300.0, 260.0),
+    }
+
+
+def test_a_new_area_made_away_from_the_canvas_is_still_findable_on_it(client):
+    """A theme added on the board must not land underneath an existing area."""
+    api, _ = client
+    boxes = []
+    for index in range(4):
+        theme = api.post("/api/library/themes", json={"title": f"T{index}"}).json()["theme"]
+        boxes.append((theme["x"], theme["y"], theme["w"], theme["h"]))
+
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1 :]:
+            assert not (
+                a[0] < b[0] + b[2] and b[0] < a[0] + a[2]
+                and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
+            ), "two areas were created on top of each other"
+
+
+def test_deleting_a_quote_removes_its_card_too(tmp_path):
+    """A card with nothing behind it would be a blank rectangle nobody can move."""
+    root = tmp_path / "study"
+    make_recording(root, "P01", [quote(1, ["trust"]), quote(2, [])])
+    registry = RecordingRegistry()
+    registry.add_library(root)
+    api = TestClient(create_app(registry))
+
+    theme = api.post("/api/library/themes", json={"title": "T"}).json()["theme"]
+    for ref in refs_of(api):
+        api.post(
+            "/api/library/canvas/place",
+            json={"ref": ref, "theme_id": theme["id"], "x": 20, "y": 100},
+        )
+
+    registry.list()[0].store.delete("q1")
+    body = api.get("/api/library/themes").json()
+
+    assert len(body["cards"]) == 1
+    assert body["cards"][0]["ref"].endswith(":q2")
+    assert body["themes"][0]["refs"] == body["on_canvas"]
+
+
+def test_a_card_left_over_an_areas_title_is_pulled_off_it(tmp_path):
+    """The theme's own name is the one thing that must always be readable.
+
+    Dragging and resizing both clamp, so this is for what they cannot reach: a
+    hand-edited file, or a position from a version that clamped differently.
+    """
+    path = tmp_path / THEMES_FILENAME
+    path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "themes": [
+                    {
+                        "id": "t1", "title": "Kept", "note": "", "color": None,
+                        "refs": ["a:b"], "x": 0, "y": 0, "w": 520, "h": 400,
+                    }
+                ],
+                "cards": [{"ref": "a:b", "theme_id": "t1", "x": 0, "y": 0}],
+            }
+        )
+    )
+
+    card = ThemeStore(path).cards()[0]
+    assert (card["x"], card["y"]) == (AREA_PAD, AREA_HEAD)
+    assert json.loads(path.read_text())["cards"][0]["y"] == AREA_HEAD
+
+
+def test_the_board_and_the_canvas_are_one_grouping(client):
+    """A theme sorted on either shape is sorted on the other.
+
+    They are two shapes of one file, not two groupings, so the board's move is
+    the canvas's place -- and this is the test that would fail if a second store
+    ever crept in.
+    """
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "Shared"}).json()["theme"]
+    ref = refs_of(api)[0]
+
+    # Sorted the board's way: no coordinates, one theme at a time.
+    api.post("/api/library/themes/assign", json={"ref": ref, "theme_id": theme["id"]})
+    body = api.get("/api/library/themes").json()
+
+    assert body["themes"][0]["refs"] == [ref]
+    assert [c["ref"] for c in body["cards"]] == [ref]
+    assert body["on_canvas"] == [ref]
+
+
+def test_a_lassoed_theme_arrives_on_the_canvas_too(client):
+    """The map's "make a theme from these" has to answer with the whole canvas."""
+    api, _ = client
+    refs = refs_of(api)[:3]
+    body = api.post(
+        "/api/library/themes/from-refs", json={"title": "Lassoed", "refs": refs}
+    ).json()
+
+    assert set(body["theme"]["refs"]) == set(refs)
+    assert {c["ref"] for c in body["cards"]} == set(refs)
+    assert not overlapping(body["cards"])
+
+
+def test_canvas_calls_against_an_unknown_theme_are_404s(client):
+    api, _ = client
+    ref = refs_of(api)[0]
+    assert api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": "nope", "x": 0, "y": 0}
+    ).status_code == 404
+    assert api.post(
+        "/api/library/canvas/reshape", json={"theme_id": "nope", "x": 0}
+    ).status_code == 404
+    assert api.post("/api/library/canvas/tidy", json={"theme_id": "nope"}).status_code == 404
+
+
+def test_canvas_calls_missing_what_they_act_on_are_400s(client):
+    api, _ = client
+    assert api.post("/api/library/canvas/place", json={"x": 0, "y": 0}).status_code == 400
+    assert api.post("/api/library/canvas/unplace", json={}).status_code == 400
+    assert api.post("/api/library/canvas/reshape", json={"x": 0}).status_code == 400
+    assert api.post("/api/library/canvas/tidy", json={}).status_code == 400
+    assert api.post("/api/library/canvas/positions", json={"moves": "no"}).status_code == 400
+
+
+def test_the_canvas_survives_a_reload(tmp_path, library):
+    store = ThemeStore(library / THEMES_FILENAME)
+    theme = store.create("Kept", box={"x": 700, "y": 800})
+    store.place("rec:q1", theme["id"], 40, 120)
+    store.place("rec:q1", None, 2000, 300)
+
+    reopened = ThemeStore(library / THEMES_FILENAME)
+    kept = reopened.list()[0]
+    assert (kept["x"], kept["y"]) == (700.0, 800.0)
+    assert kept["refs"] == ["rec:q1"]
+    assert sorted(
+        (c["theme_id"] or "", c["x"], c["y"]) for c in reopened.cards()
+    ) == [("", 2000.0, 300.0), (theme["id"], 40.0, 120.0)]
+    assert reopened.placed_refs() == {"rec:q1"}
+    assert reopened.on_canvas_refs() == {"rec:q1"}
+
+
+def test_a_file_from_a_later_version_is_not_downgraded(tmp_path):
+    """Unknown fields survive, and so does the claim about which version wrote it."""
+    path = tmp_path / THEMES_FILENAME
+    path.write_text(
+        json.dumps(
+            {
+                "version": 99,
+                "future_field": {"keep": "me"},
+                "themes": [
+                    {
+                        "id": "t1", "title": "Kept", "refs": ["a:b"], "future": 1,
+                        "x": 10, "y": 20, "w": 520, "h": 400,
+                    }
+                ],
+                "cards": [{"ref": "a:b", "theme_id": "t1", "x": 14, "y": 84, "future": 2}],
+            }
+        )
+    )
+
+    ThemeStore(path).update("t1", {"note": "added"})
+    data = json.loads(path.read_text())
+
+    assert data["version"] == 99
+    assert data["future_field"] == {"keep": "me"}
+    assert data["themes"][0]["future"] == 1
+    assert data["cards"][0]["future"] == 2
 
 
 # -- the tag vocabulary ------------------------------------------------

@@ -1,16 +1,24 @@
 /* Thematic analysis across every recording in the library.
  *
- * Three views over the same quotes, because the work has three shapes:
+ * Views over the same quotes, because the work has more than one shape:
  *
- *   Board  - drag quotes into named themes. Generative: for the stage where the
- *            themes do not exist yet and are built out of the quotes.
+ *   Canvas - the themes on a plane. Generative, and the one with no right-hand
+ *            edge: columns stop working at the width of the screen, and a plane
+ *            does not, so the number of themes is no longer a layout problem.
+ *            Where two areas sit relative to each other is itself a claim.
+ *   Board  - the same themes as columns. Still the fastest way to sort a pile
+ *            when there are few enough themes to see all of them at once.
  *   Matrix - tags against recordings. Analytical: separates a theme many people
  *            raised from one person's preoccupation, which a flat tag list hides.
  *   Pairs  - tags that share quotes. Diagnostic: finds two codes that are really
  *            one code, and codes that always arrive together.
  *
- * What none of the three would have on their own is the recording: every quote
- * here can be played where it was said, and a whole theme can be listened to in
+ * Canvas and board are two shapes of one thing, not two groupings: a theme made
+ * on either shows up on the other, because membership lives in a single file and
+ * a card on the canvas *is* a quote's membership of the area holding it.
+ *
+ * What none of them would have on their own is the recording: every quote here
+ * can be played where it was said, and a whole theme can be listened to in
  * sequence. Tone is half of what a quote means, and it does not survive being
  * written down.
  */
@@ -18,6 +26,7 @@
 import { $, api, escapeHtml, formatTime } from "./util.js";
 import { applyRate, storedRate } from "./player.js";
 import { applyStoredTheme, bindThemeToggle, notify } from "./chrome.js";
+import { initCanvas, renderCanvas, showCanvas } from "./canvas.js";
 import {
   initSemantics,
   invalidateSemantics,
@@ -30,6 +39,7 @@ const el = {
   meta: $("meta"),
   notices: $("notices"),
   modes: $("modes"),
+  canvas: $("view-canvas"),
   board: $("view-board"),
   boardColumns: $("board-columns"),
   boardFilter: $("board-filter"),
@@ -62,8 +72,13 @@ const state = {
   tags: [],
   cooccurrence: [],
   themes: [],
+  cards: [],
+  //: Quotes that are in a theme -- what the board calls sorted.
   placed: new Set(),
-  mode: "board",
+  //: Quotes with a card anywhere, loose ones included -- what the tray hides.
+  onCanvas: new Set(),
+  metrics: null,
+  mode: "canvas",
   queue: [],
   queueIndex: 0,
   queueLabel: "",
@@ -83,8 +98,8 @@ async function load() {
   state.recordings = new Map(library.recordings.map((r) => [r.id, r]));
   state.tags = library.tags;
   state.cooccurrence = library.cooccurrence;
-  state.themes = themes.themes;
-  state.placed = new Set(themes.placed);
+  state.metrics = themes.metrics;
+  adopt(themes);
 
   el.meta.textContent = [
     `${library.recordings.length} recordings`,
@@ -104,14 +119,41 @@ async function load() {
 
 function renderAll() {
   renderBoard();
+  // showCanvas rather than renderCanvas: the canvas is the mode the page opens
+  // in, so nothing clicks into it, and framing the work needs doing on the way.
+  showCanvas();
   renderMatrix();
   renderPairs();
+}
+
+/**
+ * Take on a canvas payload as the current truth.
+ *
+ * Every canvas edit answers with the whole of it, because moving one card can
+ * change two themes' membership and a client reassembling that from a narrower
+ * reply is a client that can quietly disagree with the file. So there is one
+ * place that swallows a reply, and it repaints both shapes of the same data.
+ */
+function adopt(payload) {
+  if (payload.themes) state.themes = payload.themes;
+  if (payload.cards) state.cards = payload.cards;
+  recount();
+  renderBoard();
+  renderCanvas();
+  if (state.mode === "map") renderMap();
+}
+
+/** Re-derive the two "is this quote dealt with" sets from the cards. */
+function recount() {
+  state.placed = new Set(state.themes.flatMap((theme) => theme.refs));
+  state.onCanvas = new Set(state.cards.map((card) => card.ref));
 }
 
 /* --------------------------------------------------------------- modes -- */
 
 function showMode(mode) {
   state.mode = mode;
+  el.canvas.hidden = mode !== "canvas";
   el.board.hidden = mode !== "board";
   el.matrixView.hidden = mode !== "matrix";
   el.pairsView.hidden = mode !== "pairs";
@@ -124,6 +166,7 @@ function showMode(mode) {
 
   // These three cost real work -- encoding, a layout simulation -- so they run
   // when asked for rather than on load, and only need measuring once visible.
+  if (mode === "canvas") showCanvas();
   if (mode === "map") renderMap();
   if (mode === "graph") renderGraph();
   if (mode === "signals") renderSignals();
@@ -136,7 +179,16 @@ el.modes.addEventListener("click", (event) => {
 
 /* ------------------------------------------------------ quote rendering -- */
 
-function quoteCard(quote, { draggable = true } = {}) {
+/**
+ * A quote as a board card.
+ *
+ * ``column`` is the theme this particular card is sitting in, which is not the
+ * same question as which theme the quote is in: since the canvas can pin one
+ * quote inside two areas, the same quote appears in both of those columns. So
+ * the select says where *this* card is and moving it moves only this one --
+ * anything else would make touching one column silently empty another.
+ */
+function quoteCard(quote, { draggable = true, column = null } = {}) {
   const recording = state.recordings.get(quote.recording_id);
   const tags = (quote.tags || [])
     .map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`)
@@ -144,14 +196,16 @@ function quoteCard(quote, { draggable = true } = {}) {
 
   // Dragging is the fast way to sort, but it cannot be the only way: a board
   // you can only use with a mouse is a board some people cannot use at all.
-  const home = state.themes.find((t) => t.refs.includes(quote.ref));
+  const elsewhere = state.themes.filter(
+    (theme) => theme.id !== column && theme.refs.includes(quote.ref)
+  );
   const mover = draggable
     ? `<select class="qcard__move" data-act="move" aria-label="Move this quote to a theme">
-         <option value=""${home ? "" : " selected"}>Unsorted</option>
+         <option value=""${column ? "" : " selected"}>Unsorted</option>
          ${state.themes
            .map(
              (theme) =>
-               `<option value="${theme.id}"${home && home.id === theme.id ? " selected" : ""}>${escapeHtml(theme.title)}</option>`
+               `<option value="${theme.id}"${theme.id === column ? " selected" : ""}>${escapeHtml(theme.title)}</option>`
            )
            .join("")}
        </select>`
@@ -159,6 +213,7 @@ function quoteCard(quote, { draggable = true } = {}) {
 
   return `
     <article class="qcard qcard--${quote.color || "amber"}" data-ref="${quote.ref}"
+             data-column="${column || ""}"
              ${draggable ? 'draggable="true"' : ""}>
       <p class="qcard__text">${escapeHtml(quote.text)}</p>
       <div class="qcard__meta">
@@ -171,22 +226,34 @@ function quoteCard(quote, { draggable = true } = {}) {
         </span>
       </div>
       ${quote.note ? `<p class="qcard__note">${escapeHtml(quote.note)}</p>` : ""}
+      ${
+        elsewhere.length
+          ? `<p class="qcard__also">also in ${elsewhere
+              .map((theme) => escapeHtml(theme.title))
+              .join(", ")}</p>`
+          : ""
+      }
       <div class="tags">${tags}</div>
       ${mover}
     </article>`;
 }
 
-/** Move a quote into a theme (or out of all of them) and refresh the board. */
-async function assign(ref, themeId) {
+/**
+ * Move one card from the column it is in to another, or out of the board.
+ *
+ * The same operation the canvas performs, and deliberately the same call: the
+ * board is a second shape for the canvas, not a second store. Dropping into a
+ * theme says nothing about position, and the server finds a free slot in that
+ * area -- so a quote sorted here is somewhere sensible when you next open the
+ * plane, rather than stacked on top of whatever is already at the origin.
+ */
+async function moveCard(ref, from, to) {
+  const path = to
+    ? "/api/library/canvas/place"
+    : "/api/library/canvas/unplace";
+  const body = to ? { ref, theme_id: to, moved_from: from } : { ref, theme_id: from };
   try {
-    const { themes } = await api("/api/library/themes/assign", {
-      method: "POST",
-      body: { ref, theme_id: themeId || null },
-    });
-    state.themes = themes;
-    state.placed = new Set(themes.flatMap((t) => t.refs));
-    renderBoard();
-    if (state.mode === "map") renderMap();
+    adopt(await api(path, { method: "POST", body }));
   } catch (error) {
     notify(el.notices, `Could not move that quote: ${error.message}`, { kind: "warn" });
   }
@@ -206,15 +273,18 @@ function boardQuotes() {
 
 function renderBoard() {
   const visible = boardQuotes();
-  const inTheme = new Map();
-  for (const theme of state.themes) inTheme.set(theme.id, []);
+  const shown = new Set(visible.map((quote) => quote.ref));
 
-  const unsorted = [];
-  for (const quote of visible) {
-    const theme = state.themes.find((t) => t.refs.includes(quote.ref));
-    if (theme) inTheme.get(theme.id).push(quote);
-    else unsorted.push(quote);
-  }
+  // Built from the themes outwards rather than from the quotes, because a quote
+  // pinned in two areas on the canvas is genuinely in two columns here, and
+  // asking each quote for "its" theme could only ever return one of them.
+  const inTheme = new Map(
+    state.themes.map((theme) => [
+      theme.id,
+      theme.refs.filter((ref) => shown.has(ref)).map((ref) => state.byRef.get(ref)).filter(Boolean),
+    ])
+  );
+  const unsorted = visible.filter((quote) => !state.placed.has(quote.ref));
 
   el.boardProgress.textContent = state.quotes.length
     ? `${state.placed.size} of ${state.quotes.length} quotes placed`
@@ -249,7 +319,7 @@ function renderBoard() {
         <textarea class="column__note" rows="1" placeholder="What is this theme?"
                   data-act="note">${escapeHtml(theme.note || "")}</textarea>
         <div class="column__body" data-drop="${theme.id}">
-          ${quotes.map((q) => quoteCard(q)).join("") ||
+          ${quotes.map((q) => quoteCard(q, { column: theme.id })).join("") ||
             '<p class="empty">Drag quotes here.</p>'}
         </div>
       </section>`);
@@ -265,6 +335,7 @@ el.addTheme.addEventListener("click", async () => {
     const { theme } = await api("/api/library/themes", { method: "POST", body: { title: "" } });
     state.themes.push(theme);
     renderBoard();
+    renderCanvas();
     const input = el.boardColumns.querySelector(`[data-theme-id="${theme.id}"] .column__title-input`);
     input?.focus();
     input?.select();
@@ -273,16 +344,18 @@ el.addTheme.addEventListener("click", async () => {
   }
 });
 
-// Drag and drop between columns.
+// Drag and drop between columns. What is dragged is one card, so the column it
+// came out of travels with it -- a quote in two columns must lose only the one
+// you actually picked up.
 let dragging = null;
 
 el.boardColumns.addEventListener("dragstart", (event) => {
   const card = event.target.closest(".qcard");
   if (!card) return;
-  dragging = card.dataset.ref;
+  dragging = { ref: card.dataset.ref, from: card.dataset.column || null };
   card.classList.add("qcard--dragging");
   event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData("text/plain", dragging);
+  event.dataTransfer.setData("text/plain", dragging.ref);
 });
 
 el.boardColumns.addEventListener("dragend", (event) => {
@@ -310,16 +383,20 @@ el.boardColumns.addEventListener("drop", async (event) => {
   event.preventDefault();
   body.classList.remove("column__body--over");
 
-  const ref = dragging || event.dataTransfer.getData("text/plain");
-  if (!ref) return;
-  await assign(ref, body.dataset.drop || null);
+  const card = dragging || { ref: event.dataTransfer.getData("text/plain"), from: null };
+  if (!card.ref) return;
+  const to = body.dataset.drop || null;
+  if (to !== card.from) await moveCard(card.ref, card.from, to);
 });
 
 // The same move, without a mouse.
 el.boardColumns.addEventListener("change", (event) => {
   const select = event.target.closest('[data-act="move"]');
   const card = event.target.closest(".qcard");
-  if (select && card) assign(card.dataset.ref, select.value || null);
+  if (!select || !card) return;
+  const to = select.value || null;
+  const from = card.dataset.column || null;
+  if (to !== from) moveCard(card.dataset.ref, from, to);
 });
 
 el.boardColumns.addEventListener("click", async (event) => {
@@ -344,8 +421,10 @@ el.boardColumns.addEventListener("click", async (event) => {
     try {
       await api(`/api/library/themes/${theme.id}`, { method: "DELETE" });
       state.themes = state.themes.filter((t) => t.id !== theme.id);
-      state.placed = new Set(state.themes.flatMap((t) => t.refs));
+      state.cards = state.cards.filter((card) => card.theme_id !== theme.id);
+      recount();
       renderBoard();
+      renderCanvas();
     } catch (error) {
       notify(el.notices, `Could not delete that theme: ${error.message}`, { kind: "warn" });
     }
@@ -365,6 +444,7 @@ el.boardColumns.addEventListener("change", async (event) => {
       body: patch,
     });
     Object.assign(state.themes.find((t) => t.id === theme.id) || {}, theme);
+    renderCanvas();
   } catch (error) {
     notify(el.notices, `Could not rename that theme: ${error.message}`, { kind: "warn" });
   }
@@ -587,13 +667,17 @@ el.queueMedia.addEventListener("pause", () => (el.queuePlay.textContent = "▶")
 
 /* ---------------------------------------------------------------- start -- */
 
-initSemantics({
+const shared = {
   state,
-  quoteCard,
   startQueue,
   notify: (message, options) => notify(el.notices, message, options),
   refreshBoard: renderBoard,
-});
+  adopt,
+  recount,
+};
+
+initCanvas(shared);
+initSemantics({ ...shared, quoteCard });
 
 applyStoredTheme();
 bindThemeToggle($("theme-toggle"));

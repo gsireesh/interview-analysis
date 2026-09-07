@@ -31,6 +31,7 @@ from .library import (
     ThemeStore,
     all_quotes,
     cooccurrence,
+    metrics as canvas_metrics,
     tag_index,
     untagged,
     vocabulary,
@@ -53,6 +54,10 @@ STATIC_DIR = Path(__file__).parent / "static"
 #: The HTML entry points. Held to the same revalidation rule as the scripts, so a
 #: page and its modules can never come from two different versions of the tool.
 PAGES = {"/", "/reader", "/themes"}
+
+#: Tells "the client said nothing about where this card came from" apart from
+#: "it came from the bare canvas", which is a real answer and arrives as null.
+_MOVED_ABSENT = object()
 
 
 #: Where the reloading server leaves the folder it was pointed at.
@@ -376,11 +381,19 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
         quotes = corpus()
         store = themes()
         store.prune({q["ref"] for q in quotes})
-        return {"themes": store.list(), "placed": sorted(store.placed_refs())}
+        return {**store.state(), "metrics": canvas_metrics()}
 
     @app.post("/api/library/themes", status_code=201)
     def create_theme(payload: dict = Body(default={})) -> dict:
-        return {"theme": themes().create(payload.get("title", ""), payload.get("color"))}
+        store = themes()
+        theme = store.create(
+            payload.get("title", ""),
+            payload.get("color"),
+            payload.get("box"),
+            payload.get("note", ""),
+            payload.get("cards"),
+        )
+        return {"theme": theme, **store.state()}
 
     @app.patch("/api/library/themes/{theme_id}")
     def update_theme(theme_id: str, payload: dict = Body(...)) -> dict:
@@ -408,6 +421,80 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
     @app.post("/api/library/themes/order")
     def reorder_themes(payload: dict = Body(...)) -> dict:
         return {"themes": themes().reorder(list(payload.get("order") or []))}
+
+    # -- the canvas: the same themes, laid out on a plane -------------------
+    #
+    # Every one of these answers with the whole canvas rather than the piece it
+    # touched. Dragging a card from one area to another changes two themes'
+    # membership, and a client rebuilding that from a narrower reply is a client
+    # that can drift from the file -- which, on a page whose whole content is
+    # positions, would show up as quotes in the wrong places.
+
+    def _ref(payload: dict) -> str:
+        ref = payload.get("ref")
+        if not ref:
+            raise HTTPException(status_code=400, detail="a quote reference is required")
+        return str(ref)
+
+    def _theme_id(payload: dict, key: str = "theme_id") -> str | None:
+        value = payload.get(key)
+        return str(value) if value else None
+
+    @app.post("/api/library/canvas/place")
+    def place_card(payload: dict = Body(...)) -> dict:
+        """Put a card down, in an area or loose on the canvas.
+
+        ``moved_from`` present means a drag: the card it names is picked up
+        rather than copied. Absent means a fresh card, which is how the same
+        quote comes to sit in two themes at once.
+        """
+        moved = (
+            _theme_id(payload, "moved_from") if "moved_from" in payload else _MOVED_ABSENT
+        )
+        try:
+            return themes().place(
+                _ref(payload),
+                _theme_id(payload),
+                payload.get("x"),
+                payload.get("y"),
+                **({} if moved is _MOVED_ABSENT else {"moved_from": moved}),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown theme") from exc
+
+    @app.post("/api/library/canvas/unplace")
+    def unplace_card(payload: dict = Body(...)) -> dict:
+        """Take one card off the canvas, leaving other cards for the same quote."""
+        return themes().unplace(_ref(payload), _theme_id(payload))
+
+    @app.post("/api/library/canvas/positions")
+    def move_cards(payload: dict = Body(...)) -> dict:
+        moves = payload.get("moves")
+        if not isinstance(moves, list):
+            raise HTTPException(status_code=400, detail="moves must be a list")
+        return themes().reposition([m for m in moves if isinstance(m, dict)])
+
+    @app.post("/api/library/canvas/reshape")
+    def reshape_area(payload: dict = Body(...)) -> dict:
+        """Move or resize a theme's area. Its quotes travel with it."""
+        theme_id = _theme_id(payload)
+        if theme_id is None:
+            raise HTTPException(status_code=400, detail="a theme is required")
+        try:
+            return {"theme": themes().reshape(theme_id, payload)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown theme") from exc
+
+    @app.post("/api/library/canvas/tidy")
+    def tidy_area(payload: dict = Body(...)) -> dict:
+        """Pack one area's cards back into a grid, and grow it to fit them."""
+        theme_id = _theme_id(payload)
+        if theme_id is None:
+            raise HTTPException(status_code=400, detail="a theme is required")
+        try:
+            return themes().tidy(theme_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown theme") from exc
 
     # -- reading the corpus by meaning ------------------------------------
 
@@ -511,7 +598,7 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
         theme = store.create(payload.get("title", ""), payload.get("color"))
         for ref in refs:
             store.assign(ref, theme["id"])
-        return {"theme": theme, "themes": store.list()}
+        return {"theme": theme, **store.state()}
 
     # -- pages -------------------------------------------------------------
 

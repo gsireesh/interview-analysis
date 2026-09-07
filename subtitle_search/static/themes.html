@@ -17,7 +17,8 @@
 
   <div class="topbar__search">
     <nav class="modes" id="modes">
-      <button class="btn" data-mode="board" type="button" aria-pressed="true">Board</button>
+      <button class="btn" data-mode="canvas" type="button" aria-pressed="true">Canvas</button>
+      <button class="btn" data-mode="board" type="button" aria-pressed="false">Board</button>
       <button class="btn" data-mode="matrix" type="button" aria-pressed="false">Matrix</button>
       <button class="btn" data-mode="pairs" type="button" aria-pressed="false">Pairs</button>
       <button class="btn" data-mode="map" type="button" aria-pressed="false">Map</button>
@@ -37,9 +38,59 @@
 
 <div class="notices" id="notices"></div>
 
-<!-- Board: cluster quotes into named themes by dragging. Generative — for when
-     the themes are not known yet. -->
-<main class="board" id="view-board">
+<!-- Canvas: the same themes on a plane instead of in columns. Generative, and
+     the only view with no right-hand edge — so the number of themes stops being
+     limited by the width of the screen. An area is a theme; a card is one
+     appearance of a quote, and the same quote can be pinned in two areas. -->
+<main class="canvas" id="view-canvas">
+  <div class="canvas__toolbar">
+    <button class="btn" id="canvas-add-area" type="button">+ New area</button>
+    <span class="zoomer">
+      <button class="btn btn--icon" data-zoom="out" type="button" aria-label="Zoom out">−</button>
+      <span class="zoomer__level" id="canvas-zoom">100%</span>
+      <button class="btn btn--icon" data-zoom="in" type="button" aria-label="Zoom in">+</button>
+      <button class="btn" id="canvas-fit" type="button" title="Frame everything (0)">Fit</button>
+    </span>
+    <span class="board__hint" id="canvas-progress"></span>
+    <button class="btn" id="tray-toggle" type="button" aria-expanded="true"
+            aria-controls="tray">Quotes <span class="count" id="tray-count">0</span></button>
+  </div>
+
+  <div class="canvas__body">
+    <div class="canvas__viewport" id="canvas-viewport" tabindex="0"
+         aria-label="Theme canvas. Drag to pan, ctrl and scroll to zoom.">
+      <div class="canvas__surface" id="canvas-surface"></div>
+      <!-- Outside the surface, so it does not pan or zoom away from the person
+           who needs to read it. -->
+      <p class="canvas__blank" id="canvas-blank" hidden>
+        Nothing on the plane yet. Make an <strong>area</strong> for a theme, then drag
+        quotes out of the tray into it — or drop one on bare canvas to park it while
+        you decide.<br>
+        <span class="canvas__keys">drag the background to pan · ctrl-scroll or ⌘-scroll to zoom · 0 to frame everything</span>
+      </p>
+    </div>
+
+    <!-- The quotes not out on the plane yet. A study has hundreds; scattering
+         them all would be a mess nobody would sort. -->
+    <aside class="tray" id="tray">
+      <header class="tray__head">
+        <input class="tray__search" id="tray-search" type="search" placeholder="Search quotes"
+               aria-label="Search the quotes not yet on the canvas">
+        <select id="tray-filter" aria-label="Which quotes to list">
+          <option value="all">every quote</option>
+          <option value="tagged">only tagged</option>
+          <option value="untagged">only untagged</option>
+        </select>
+      </header>
+      <div class="tray__body" id="tray-body"></div>
+      <footer class="tray__foot" id="inspector"></footer>
+    </aside>
+  </div>
+</main>
+
+<!-- Board: cluster quotes into named themes by dragging. Columns, which is the
+     right shape until there are more themes than fit across the screen. -->
+<main class="board" id="view-board" hidden>
   <div class="board__toolbar">
     <button class="btn" id="add-theme" type="button">+ New theme</button>
     <label class="board__filter">

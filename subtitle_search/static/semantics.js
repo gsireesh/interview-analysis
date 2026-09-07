@@ -209,14 +209,15 @@ function bindMap() {
     const title = prompt(`Name for a theme of ${selection.size} quotes`, "");
     if (title === null) return;
     try {
-      const { themes } = await api("/api/library/themes/from-refs", {
-        method: "POST",
-        body: { title, refs: [...selection] },
-      });
-      ctx.state.themes = themes;
-      ctx.state.placed = new Set(themes.flatMap((t) => t.refs));
+      // A lasso makes an area on the canvas too, so this answers with the whole
+      // of it rather than just the themes -- one place takes a reply on.
+      ctx.adopt(
+        await api("/api/library/themes/from-refs", {
+          method: "POST",
+          body: { title, refs: [...selection] },
+        })
+      );
       selection = new Set();
-      ctx.refreshBoard();
       renderMap();
     } catch (error) {
       ctx.notify(`Could not make that theme: ${error.message}`, { kind: "warn" });

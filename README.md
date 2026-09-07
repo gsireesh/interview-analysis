@@ -503,17 +503,72 @@ in the reader.
 
 ## Themes: analysis across recordings
 
-`/themes` works on every quote in the library at once, in three views. They exist
-because the work has three shapes, and no single layout serves all of them.
+`/themes` works on every quote in the library at once, in several views. They
+exist because the work has several shapes, and no single layout serves all of
+them. The canvas and the board are two shapes of the *same* grouping — a theme
+made on either appears on the other, because there is one file underneath.
 
-### Board — for when the themes do not exist yet
+### Canvas — affinity diagramming on a plane
 
-Quotes as cards, dragged into named columns. This is affinity diagramming: you
-sort until clusters appear, then name them. Drag is the fast path; every card
-also has a menu, so the board works without a mouse.
+Quotes as post-its on a surface that pans and zooms. Areas are themes; cards are
+quotes; where things sit is up to you.
 
-A quote belongs to **one** theme at a time. That is deliberate — the point of the
-board is to force the decision that a list of tags lets you defer.
+The board it replaces ran out of screen. Columns only work while they all fit,
+and past about six themes the useful ones are off the right-hand edge — which is
+the point at which the layout starts deciding what you think about. A plane has
+no right-hand edge.
+
+What the plane also gets you is what a column list cannot express at all. Two
+areas nudged up against each other is a claim you are making about them. An
+outlier parked on bare canvas between two areas is a quote you have not decided
+about. None of that is a field in the file; it is the arrangement, and the
+arrangement is the analysis.
+
+- **New area** makes a theme, in the middle of what you are looking at.
+- Drag quotes out of the **tray** on the right onto the plane. A study has
+  hundreds of quotes, so they wait in a list rather than being scattered across
+  the surface on first open. Search and filter it; a quote leaves the list once
+  it has a card anywhere.
+- Drag an area **by its header** and its quotes travel with it. Card positions
+  are stored relative to their area, so this is two numbers changing and nothing
+  can be left behind.
+- **Resize** from the bottom-right corner. Cards a smaller box no longer covers
+  are pulled back inside rather than evicted — a quote does not stop being part
+  of a theme because you dragged the box in.
+- **⊞ tidy** packs one area's cards back into a grid and grows it to fit, for
+  when free placement has become a pile.
+- Drag a card **back to the tray** to put it away. Only that card: other copies
+  of the same quote stay where they are.
+- Drop a card on **bare canvas** to park it. It counts as dealt with — it leaves
+  the tray — without being filed in any theme.
+- **✕** deletes an area and offers an undo that restores the box, the note and
+  the arrangement inside it. The quotes were never at risk: they live in the
+  recordings, and without an area they simply return to the tray.
+
+**The same quote can be pinned in two areas.** A card is one *appearance* of a
+quote, not the quote itself, so alt-drag (or **Also place in…**) leaves the
+original where it is and puts a second card elsewhere — photocopying a post-it to
+pin it to two walls. On the board those show as one quote in two columns, each
+card saying where else it appears.
+
+Without a mouse: tab to a quote in the tray and press enter to put it on the
+plane; tab to a card and the panel under the tray moves it between themes, arrow
+keys nudge it (shift for fine), delete puts it away. Drag the background to pan,
+ctrl- or ⌘-scroll to zoom, `0` to frame everything.
+
+A themes file written before the canvas existed has no coordinates in it. The
+first open lays those themes out in a grid and packs each one's quotes inside,
+rather than opening empty and asking for sorting you already did.
+
+### Board — columns, for when there are few enough to see
+
+The same themes as columns, which is the right shape until there are more themes
+than fit across the screen. Drag is the fast path; every card also has a menu, so
+the board works without a mouse.
+
+The board's move is one theme at a time: choosing a theme there takes the quote
+out of the others. The canvas is where a quote goes into two themes at once,
+because there you can see that it did.
 
 Each column shows how many recordings it draws on, which is the difference
 between a theme and one person's preoccupation. The filter narrows the board to
