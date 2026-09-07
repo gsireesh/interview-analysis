@@ -33,6 +33,7 @@ import { $, api, debounce, escapeHtml, formatTime, recall, remember } from "./ut
 
 const VIEW_KEY = "subtitle-search:canvas-view";
 const TRAY_KEY = "subtitle-search:canvas-tray";
+const GRID_KEY = "subtitle-search:canvas-grid";
 
 //: Pointer travel before a press becomes a drag. Without it, clicking a card's
 //: play button on a trackpad regularly moves the card a pixel and saves that.
@@ -68,6 +69,17 @@ let focused = null;
 /** Whether the view has been framed on the work at least once. */
 let framed = false;
 
+/**
+ * Grid view: every area's cards drawn packed, and not one position written.
+ *
+ * Free placement is the point of the plane and it is also how an area ends up
+ * unreadable. This is the way to read it without giving up the arrangement that
+ * made it unreadable -- the stored positions are untouched, and turning it off
+ * puts everything back exactly where it was. It packs the same way the server's
+ * tidy does, so it doubles as a preview of what tidying that area would commit.
+ */
+let gridView = false;
+
 /* ------------------------------------------------------------- geometry -- */
 
 /**
@@ -96,6 +108,13 @@ const rememberView = debounce(() => remember(VIEW_KEY, JSON.stringify(view)), 30
 
 function applyView() {
   el.surface.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
+  // Published to CSS so an area's title can undo the zoom and stay one size on
+  // screen. A quote shrinking as you pull back is fine -- you are not reading it
+  // from there -- but a theme's name is what you navigate by, and a plane whose
+  // labels become illegible exactly when you zoom out to see all of them has
+  // given up the thing it was for.
+  el.surface.style.setProperty("--z", String(view.z));
+  el.surface.style.setProperty("--inv-z", String(1 / view.z));
   // The dot grid is painted by the viewport rather than the surface, so it can
   // run endlessly in all four directions without a vast element to carry it.
   // Coarser when zoomed far out, where a fine grid would read as grey fog.
@@ -103,7 +122,113 @@ function applyView() {
   el.viewport.style.backgroundSize = `${pitch}px ${pitch}px`;
   el.viewport.style.backgroundPosition = `${view.x}px ${view.y}px`;
   el.zoomLevel.textContent = `${Math.round(view.z * 100)}%`;
+  fitChrome();
   rememberView();
+}
+
+//: Screen widths at which a title bar gives something up. Measured, not
+//: guessed: what fits depends on the area's width *and* the zoom.
+const TIGHT = 340;
+const CRAMPED = 210;
+
+/**
+ * Make room for the theme's name by dropping everything less important.
+ *
+ * The bar does not scale, so zooming out does not shrink it -- it runs out of
+ * area to sit in instead, and something has to yield. The name never does: it is
+ * what you navigate by, and a row of half-truncated titles is the failure this
+ * whole arrangement was meant to avoid.
+ *
+ * The name has its own row for that reason, sharing it with nothing but the
+ * roll-up arrow and the count. Everything else -- the note, the recording
+ * spread, the buttons -- is on a second row that goes when there is no width for
+ * it, which also brings the bar back inside the room reserved for it and stops
+ * it covering the top row of cards. Zooming in brings it all back.
+ */
+function fitChrome() {
+  for (const node of el.surface.querySelectorAll(".area")) {
+    const width = node.offsetWidth * view.z;
+    node.classList.toggle("area--tight", width < TIGHT);
+    node.classList.toggle("area--cramped", width < CRAMPED);
+  }
+  fitTitles();
+
+  // How tall the area has to be to hold its own title bar.
+  //
+  // The two live in different units, and that is the whole of the arithmetic
+  // here. The bar renders one layout pixel to one screen pixel, because its 1/z
+  // undoes the surface's z. The area does not: its height is in canvas units and
+  // renders at z of that. So a bar of H pixels needs H / z canvas units under
+  // it, and using H directly -- as is tempting -- leaves the box short by
+  // exactly the zoom.
+  //
+  // Rolled up, that *is* the height: the area is its bar and nothing else.
+  // Otherwise it is a floor, reached only when zoom or a wrapped name has made
+  // the bar taller than the box, and an area seen from a distance becomes a
+  // labelled tile. Neither is written down; zooming in undoes both.
+  for (const node of el.surface.querySelectorAll(".area")) {
+    const chrome = node.querySelector(".area__chrome");
+    if (!chrome) continue;
+    const needed = `${chrome.offsetHeight / view.z}px`;
+    const collapsed = node.classList.contains("area--collapsed");
+    if (collapsed) {
+      node.style.height = needed;
+      node.style.minHeight = "";
+    } else {
+      node.style.minHeight = needed;
+    }
+  }
+}
+
+//: The title's size on screen, and the floor it is allowed to fall to when a
+//: single long word will not fit an area however it is wrapped.
+const TITLE_PX = 13;
+const TITLE_MIN_PX = 9;
+
+//: An offscreen context, for asking how wide a word is without laying anything
+//: out. Measuring the real field instead would mean a write, a forced reflow and
+//: a read per area on every wheel tick.
+const ruler = document.createElement("canvas").getContext("2d");
+
+function widestWord(text, font) {
+  ruler.font = font;
+  return text
+    .split(/\s+/)
+    .reduce((widest, word) => Math.max(widest, ruler.measureText(word).width), 0);
+}
+
+/**
+ * Let a long name wrap, and shrink it only when even that will not do.
+ *
+ * Zoomed far out there is genuinely not the width for "Nobody opens the
+ * spreadsheet" on one line, so the field wraps -- which is why it is a textarea
+ * and not an input -- and its height is followed here rather than by
+ * ``field-sizing``, which is too new to depend on.
+ *
+ * Wrapping runs out too. Below about a quarter zoom an area is a hundred pixels
+ * across and a single word can be wider than that, and then there are only three
+ * things you can do to it: cut it, break it mid-word, or make it smaller. Smaller
+ * is the only one that leaves it readable, so the type gives way at exactly the
+ * point it has to and not one zoom step sooner -- across the whole range anyone
+ * works at, a theme's name is the same size it is in the sidebar.
+ */
+function fitTitles() {
+  for (const field of el.surface.querySelectorAll(".area__title")) {
+    field.style.fontSize = "";
+    // The bar is laid out at z times the area's width and drawn back at 1/z, so
+    // its layout pixels *are* screen pixels. No conversion, at any zoom.
+    const room = field.clientWidth;
+    const needed = widestWord(field.value, getComputedStyle(field).font);
+    if (room > 0 && needed > room) {
+      field.style.fontSize = `${Math.max(TITLE_MIN_PX, TITLE_PX * (room / needed))}px`;
+    }
+
+    field.style.height = "auto";
+    // scrollHeight is content plus padding; the box is border-box. Without the
+    // borders back the field lands two pixels short and clips its last line.
+    const borders = field.offsetHeight - field.clientHeight;
+    field.style.height = `${field.scrollHeight + borders}px`;
+  }
 }
 
 function restoreView() {
@@ -128,7 +253,7 @@ function zoomAt(clientX, clientY, factor) {
 function fit() {
   const { card_w, card_h } = metrics();
   const boxes = [
-    ...ctx.state.themes.map((t) => [t.x, t.y, t.w, t.h]),
+    ...ctx.state.themes.map(areaBox).map((t) => [t.x, t.y, t.w, t.h]),
     ...ctx.state.cards
       .filter((c) => !c.theme_id)
       .map((c) => [c.x, c.y, card_w, card_h]),
@@ -154,6 +279,77 @@ function fit() {
   applyView();
 }
 
+/* -- packing -------------------------------------------------------------- */
+
+/* The same packing the server performs when it tidies an area, computed from the
+ * numbers the server sent. Not a second opinion about layout: one formula over
+ * one set of constants, so grid view previews what tidying would write. */
+
+function packColumns(width) {
+  const { card_w, card_gap, area_pad } = metrics();
+  return Math.max(1, Math.floor((width - 2 * area_pad + card_gap) / (card_w + card_gap)));
+}
+
+function packSlot(index, columns) {
+  const { card_w, card_h, card_gap, area_pad, area_head } = metrics();
+  return {
+    x: area_pad + (index % columns) * (card_w + card_gap),
+    y: area_head + Math.floor(index / columns) * (card_h + card_gap),
+  };
+}
+
+function packHeight(count, width) {
+  const { card_h, card_gap, area_pad, area_head } = metrics();
+  const rows = Math.max(1, Math.ceil(Math.max(1, count) / packColumns(width)));
+  return area_head + rows * (card_h + card_gap) - card_gap + area_pad;
+}
+
+/** Cards in reading order -- the order tidy uses, so packing is stable. */
+function readingOrder(cards) {
+  const { card_h } = metrics();
+  return [...cards].sort(
+    (a, b) => Math.round(a.y / (card_h / 2)) - Math.round(b.y / (card_h / 2)) || a.x - b.x
+  );
+}
+
+/** Where an area's cards are drawn: as placed, or packed for grid view. */
+function laidOut(theme, cards) {
+  if (!gridView) return cards;
+  const columns = packColumns(theme.w);
+  return readingOrder(cards).map((card, index) => ({ ...card, ...packSlot(index, columns) }));
+}
+
+/**
+ * The height to draw an area at, from state alone.
+ *
+ * Kept free of the DOM on purpose: this decides the inline height in the markup,
+ * and a version that measured the previous render would feed its own output back
+ * in and ratchet upwards. Rolled up, CSS sizes the box to its bar and nothing is
+ * written here at all.
+ */
+function drawnHeight(theme) {
+  if (theme.collapsed) return null;
+  if (!gridView) return theme.h;
+  const count = ctx.state.cards.filter((c) => c.theme_id === theme.id).length;
+  return Math.max(theme.h, packHeight(count, theme.w));
+}
+
+/**
+ * The box an area actually occupies, which is not always the one it stores.
+ *
+ * Rolled up it is as tall as its title bar; in grid view as tall as the packing
+ * needs; and zoomed far out, as tall as a wrapped title has made that bar. All
+ * three are drawing decisions rather than edits, so the stored height stays put
+ * and this reports what is on screen -- which is what a drop has to be tested
+ * against, and the only version of the box that is right in every case.
+ */
+function areaBox(theme) {
+  const node = el.surface.querySelector(`.area[data-theme="${CSS.escape(theme.id)}"]`);
+  // offsetWidth/Height are in canvas units: layout ignores the transform.
+  if (node) return { ...theme, w: node.offsetWidth, h: node.offsetHeight };
+  return { ...theme, h: drawnHeight(theme) ?? metrics().area_head };
+}
+
 /**
  * Which area a point on the plane falls in.
  *
@@ -163,6 +359,7 @@ function fit() {
  */
 function areaAt(point) {
   return ctx.state.themes
+    .map(areaBox)
     .filter(
       (t) =>
         point.x >= t.x && point.x <= t.x + t.w && point.y >= t.y && point.y <= t.y + t.h
@@ -205,35 +402,63 @@ function cardMarkup(quote, card) {
     </article>`;
 }
 
+/**
+ * An area: a boundary drawn on the surface, with its title bar on top.
+ *
+ * The chrome is one element rather than a header and a note side by side,
+ * because it has to be counter-scaled as a unit -- one transform, and one opaque
+ * background so that when zooming out makes the bar taller in canvas units than
+ * the room reserved for it, it reads as a title bar over the cards rather than
+ * as something broken.
+ *
+ * Rolled up, the area gets no height at all and CSS sizes it to that bar. A
+ * quote can still be dropped on it: the theme is closed, not shut.
+ */
 function areaMarkup(theme, cards) {
   const spread = new Set(
     cards.map((c) => ctx.state.byRef.get(c.ref)?.recording_id).filter(Boolean)
   );
+  const height = drawnHeight(theme);
+  const shown = theme.collapsed ? [] : laidOut(theme, cards);
   return `
-    <section class="area" data-theme="${escapeHtml(theme.id)}"
-             style="left:${theme.x}px; top:${theme.y}px; width:${theme.w}px; height:${theme.h}px">
-      <header class="area__head" data-handle="move">
-        <input class="area__title" value="${escapeHtml(theme.title)}" data-act="rename"
-               aria-label="Theme name">
-        <span class="area__count" title="quotes in this theme">${cards.length}</span>
-        <span class="area__spread">${spread.size}/${ctx.state.recordings.size} rec</span>
-        <button class="icon-btn" data-act="play-theme" type="button"
-                title="Play every quote in this theme">▶</button>
-        <button class="icon-btn" data-act="tidy" type="button"
-                title="Pack these into a grid">⊞</button>
-        <button class="icon-btn" data-act="delete" type="button"
-                title="Delete this area">✕</button>
-      </header>
-      <input class="area__note" value="${escapeHtml(theme.note || "")}" data-act="note"
-             placeholder="What is this theme?" aria-label="What this theme is">
-      ${cards
+    <section class="area${theme.collapsed ? " area--collapsed" : ""}"
+             data-theme="${escapeHtml(theme.id)}"
+             style="left:${theme.x}px; top:${theme.y}px; width:${theme.w}px${
+               height === null ? "" : `; height:${height}px`
+             }">
+      <div class="area__chrome" data-handle="move">
+        <header class="area__head">
+          <button class="icon-btn area__roll" data-act="collapse" type="button"
+                  aria-expanded="${theme.collapsed ? "false" : "true"}"
+                  title="${theme.collapsed ? "Open this theme" : "Roll this theme up to its title"}"
+                  >${theme.collapsed ? "▸" : "▾"}</button>
+          <textarea class="area__title" data-act="rename" rows="1" wrap="soft"
+                    spellcheck="false" aria-label="Theme name"
+                    >${escapeHtml(theme.title)}</textarea>
+          <span class="area__count" title="quotes in this theme">${cards.length}</span>
+        </header>
+        <div class="area__sub">
+          <input class="area__note" value="${escapeHtml(theme.note || "")}" data-act="note"
+                 placeholder="What is this theme?" aria-label="What this theme is">
+          <span class="area__spread">${spread.size}/${ctx.state.recordings.size} rec</span>
+          <span class="area__tools">
+            <button class="icon-btn" data-act="play-theme" type="button"
+                    title="Play every quote in this theme">▶</button>
+            <button class="icon-btn" data-act="tidy" type="button"
+                    title="Pack these into a grid for good">⊞</button>
+            <button class="icon-btn" data-act="delete" type="button"
+                    title="Delete this area">✕</button>
+          </span>
+        </div>
+      </div>
+      ${shown
         .map((card) => {
           const quote = ctx.state.byRef.get(card.ref);
           return quote ? cardMarkup(quote, card) : "";
         })
         .join("")}
-      ${cards.length ? "" : '<p class="area__empty">Drag quotes in here.</p>'}
-      <span class="area__grip" data-handle="resize" title="Resize"></span>
+      ${theme.collapsed || cards.length ? "" : '<p class="area__empty">Drag quotes in here.</p>'}
+      ${theme.collapsed ? "" : '<span class="area__grip" data-handle="resize" title="Resize"></span>'}
     </section>`;
 }
 
@@ -275,7 +500,9 @@ export function renderCanvas() {
       (undecided > 0 ? ` · ${undecided} loose` : "")
     : "no quotes saved yet";
 
+  fitChrome();
   renderTray();
+  markMatches();
   if (focused) {
     const node = cardNode(focused.ref, focused.theme_id);
     if (node) node.classList.add("ccard--focus");
@@ -301,27 +528,151 @@ function cardNode(ref, themeId) {
  * leaves the list the moment it has a card anywhere -- including parked loose on
  * bare canvas, because a quote you have already pulled out and looked at is one
  * you have dealt with, whether or not a theme claims it.
+ *
+ * Which is exactly why the list needs narrowing on more than its text. Sorting
+ * a pile of three hundred is not one job; it is "everything Priya said about
+ * trust", then "the untagged remainder", then "the three long ones I keep
+ * putting off". Each of those is a filter, and without them the tray is a scroll
+ * bar.
  */
+
+/** What the filter bar is currently asking for. */
+function filters() {
+  return {
+    text: el.traySearch.value.trim().toLowerCase(),
+    tag: el.filterTag.value,
+    speaker: el.filterSpeaker.value,
+    recording: el.filterRecording.value,
+    color: el.filterColor.value,
+    note: el.filterNote.value,
+    sort: el.filterSort.value,
+  };
+}
+
+function anyFilter(active = filters()) {
+  return Boolean(
+    active.text || active.tag || active.speaker || active.recording || active.color || active.note
+  );
+}
+
+/**
+ * Whether one quote answers the filter bar.
+ *
+ * Every dimension is an "and": the reason to have six of them is to arrive at a
+ * handful, not at a longer list.
+ */
+function matches(quote, active) {
+  const tags = quote.tags || [];
+  if (active.tag === "state:any" && !tags.length) return false;
+  if (active.tag === "state:none" && tags.length) return false;
+  if (active.tag.startsWith("tag:") && !tags.includes(active.tag.slice(4))) return false;
+  if (active.speaker && (quote.speaker || "") !== active.speaker) return false;
+  if (active.recording && quote.recording_id !== active.recording) return false;
+  if (active.color && (quote.color || "amber") !== active.color) return false;
+  if (active.note === "yes" && !(quote.note || "").trim()) return false;
+  if (active.note === "no" && (quote.note || "").trim()) return false;
+  if (!active.text) return true;
+  return (
+    quote.text.toLowerCase().includes(active.text) ||
+    (quote.note || "").toLowerCase().includes(active.text) ||
+    tags.some((tag) => tag.toLowerCase().includes(active.text)) ||
+    (quote.speaker || "").toLowerCase().includes(active.text)
+  );
+}
+
+const SORTS = {
+  // The corpus order: recording, then time within it. Reading order, in effect.
+  recording: null,
+  longest: (a, b) => b.text.length - a.text.length,
+  shortest: (a, b) => a.text.length - b.text.length,
+  tags: (a, b) => (b.tags || []).length - (a.tags || []).length,
+};
+
 function trayQuotes() {
-  const needle = el.traySearch.value.trim().toLowerCase();
-  const filter = el.trayFilter.value;
-  return ctx.state.quotes.filter((quote) => {
-    if (ctx.state.onCanvas.has(quote.ref)) return false;
-    if (filter === "tagged" && !(quote.tags || []).length) return false;
-    if (filter === "untagged" && (quote.tags || []).length) return false;
-    if (!needle) return true;
-    return (
-      quote.text.toLowerCase().includes(needle) ||
-      (quote.tags || []).some((tag) => tag.toLowerCase().includes(needle)) ||
-      (quote.speaker || "").toLowerCase().includes(needle)
-    );
-  });
+  const active = filters();
+  const quotes = ctx.state.quotes.filter(
+    (quote) => !ctx.state.onCanvas.has(quote.ref) && matches(quote, active)
+  );
+  const order = SORTS[active.sort];
+  return order ? [...quotes].sort(order) : quotes;
+}
+
+/**
+ * Rebuild a filter's options, keeping whatever was chosen.
+ *
+ * The corpus changes underneath -- a quote gets a tag in the reader, a recording
+ * is added -- and rebuilding on every render would throw away the filter
+ * mid-sort. So the options are only replaced when they actually differ, and the
+ * selection survives as long as it still exists.
+ */
+function fillFilter(select, placeholder, options) {
+  const signature = JSON.stringify([placeholder, options]);
+  if (select.dataset.signature === signature) return;
+  const chosen = select.value;
+  select.dataset.signature = signature;
+  select.innerHTML =
+    `<option value="">${escapeHtml(placeholder)}</option>` +
+    options
+      .map(([value, label]) =>
+        value === null
+          ? `<option disabled>──────────</option>`
+          : `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`
+      )
+      .join("");
+  select.value = [...select.options].some((option) => option.value === chosen) ? chosen : "";
+}
+
+function renderFilters() {
+  // Counted over the whole corpus rather than the tray, so a number next to a
+  // tag means the same thing whatever else is selected.
+  const counts = new Map();
+  const speakers = new Map();
+  for (const quote of ctx.state.quotes) {
+    for (const tag of quote.tags || []) counts.set(tag, (counts.get(tag) || 0) + 1);
+    const who = quote.speaker || "";
+    if (who) speakers.set(who, (speakers.get(who) || 0) + 1);
+  }
+
+  fillFilter(el.filterTag, "any tag", [
+    ["state:any", "tagged with anything"],
+    ["state:none", "not tagged at all"],
+    [null, null],
+    ...[...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([tag, count]) => [`tag:${tag}`, `${tag} (${count})`]),
+  ]);
+  fillFilter(
+    el.filterSpeaker,
+    "anyone",
+    [...speakers.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([who, count]) => [who, `${who} (${count})`])
+  );
+  fillFilter(
+    el.filterRecording,
+    "every recording",
+    [...ctx.state.recordings.values()].map((rec) => [rec.id, rec.title])
+  );
+  fillFilter(
+    el.filterColor,
+    "any colour",
+    [...new Set(ctx.state.quotes.map((q) => q.color || "amber"))].sort().map((c) => [c, c])
+  );
 }
 
 function renderTray() {
+  renderFilters();
   const quotes = trayQuotes();
+  const active = filters();
   const scroll = el.trayBody.scrollTop;
+
   el.trayCount.textContent = String(quotes.length);
+  el.filterClear.hidden = !anyFilter(active);
+  const waiting = ctx.state.quotes.length - ctx.state.onCanvas.size;
+  el.traySummary.textContent = anyFilter(active)
+    ? `${quotes.length} of ${waiting} waiting`
+    : `${waiting} waiting`;
+
   el.trayBody.innerHTML = quotes.length
     ? quotes
         .map(
@@ -334,11 +685,38 @@ function renderTray() {
               <span>${escapeHtml(quote.speaker || quote.recording_title || "")}</span>
               <time>${formatTime(quote.start_time)}</time>
             </p>
+            ${
+              (quote.tags || []).length
+                ? `<p class="tray__tags">${escapeHtml((quote.tags || []).join(" · "))}</p>`
+                : ""
+            }
           </article>`
         )
         .join("")
-    : '<p class="empty">Everything is out on the canvas.</p>';
+    : `<p class="empty">${
+        anyFilter(active)
+          ? "Nothing waiting matches that. Clear the filters to see the rest."
+          : "Everything is out on the canvas."
+      }</p>`;
   el.trayBody.scrollTop = scroll;
+}
+
+/**
+ * Mark the cards on the plane that answer the filter too.
+ *
+ * Filtering a list tells you what is left to do. Filtering a *plane* can tell
+ * you something the list cannot: where the quotes you are asking about already
+ * ended up. Nothing is hidden and nothing moves -- a filter is a question, and
+ * hiding a card would be an answer to a question nobody asked.
+ */
+function markMatches() {
+  const active = filters();
+  const on = anyFilter(active);
+  el.surface.classList.toggle("canvas__surface--filtering", on);
+  for (const node of el.surface.querySelectorAll(".ccard")) {
+    const quote = ctx.state.byRef.get(node.dataset.ref);
+    node.classList.toggle("ccard--match", on && Boolean(quote) && matches(quote, active));
+  }
 }
 
 /**
@@ -375,7 +753,11 @@ function showInspector() {
           .join("")}
       </select>
     </label>
-    <p class="inspector__hint">arrows move it · shift for fine · delete puts it away</p>
+    <p class="inspector__hint">${
+      gridView
+        ? "grid view is on · delete puts it away"
+        : "arrows move it · shift for fine · delete puts it away"
+    }</p>
     <div class="inspector__acts">
       <button class="btn" data-act="duplicate" type="button">Also place in…</button>
       <button class="btn" data-act="remove" type="button">Put away</button>
@@ -549,13 +931,29 @@ async function finishCardDrag(clientX, clientY) {
   }
 
   const target = areaAt({ x: point.x + card_w / 2, y: point.y + card_h / 2 });
-  const body = { ref, theme_id: target ? target.id : null };
-  if (target) {
-    const spot = clampToArea(target, point.x - target.x, point.y - target.y);
-    Object.assign(body, spot);
-  } else {
-    Object.assign(body, { x: point.x, y: point.y });
+  const theme = target ? ctx.state.themes.find((t) => t.id === target.id) : null;
+
+  // Grid view draws positions rather than reading them, so a drag that stays
+  // inside one area has nowhere to put anything: it would land back in its slot
+  // and the write would be invisible. Between areas it still means something,
+  // and that still happens.
+  if (gridView && !wasNew && !copy && (theme?.id || null) === (from || null)) {
+    renderCanvas();
+    return;
   }
+
+  const body = { ref, theme_id: theme ? theme.id : null };
+  if (!theme) {
+    Object.assign(body, { x: point.x, y: point.y });
+  } else if (!gridView && !theme.collapsed) {
+    // Positions are stored against the area's own box, so the clamp is against
+    // that -- not against the box grid view or a roll-up happens to be drawing.
+    Object.assign(body, clampToArea(theme, point.x - theme.x, point.y - theme.y));
+  }
+  // Rolled up or in grid view there is no meaningful spot to name, so none is
+  // named and the server finds a clear one -- which is where the card turns out
+  // to be when the area is opened again.
+
   // A move names where it came from so the card travels; a copy says nothing, and
   // the server adds a second card for the same quote.
   if (!wasNew && !copy) body.moved_from = from;
@@ -615,9 +1013,12 @@ function onPointerDown(event) {
   if (area && event.button === 0) {
     const theme = ctx.state.themes.find((t) => t.id === area.dataset.theme);
     if (theme) {
+      // Resizing starts from the box on screen, not the stored one: in grid view
+      // those differ, and a grip that jumps when you take hold of it is a grip
+      // nobody can aim.
       drag =
         handle === "resize"
-          ? { kind: "resize", start, node: area, theme, w: theme.w, h: theme.h }
+          ? { kind: "resize", start, node: area, theme, w: theme.w, h: areaBox(theme).h }
           : { kind: "area", start, node: area, theme, x: theme.x, y: theme.y };
       area.classList.add("area--moving");
       return;
@@ -771,6 +1172,12 @@ function onKeyDown(event) {
   const shift = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[
     event.key
   ];
+  if (shift && gridView) {
+    // Nothing to nudge: grid view is drawing the positions, not reading them.
+    event.preventDefault();
+    ctx.notify("Grid view is on, so cards sit where it packs them. Turn it off to arrange by hand.");
+    return;
+  }
   if (shift) {
     event.preventDefault();
     const theme = focused.theme_id
@@ -812,6 +1219,19 @@ async function onSurfaceClick(event) {
   const theme = ctx.state.themes.find((t) => t.id === area.dataset.theme);
   if (!theme) return;
 
+  if (act === "collapse") {
+    try {
+      const { theme: saved } = await api(`/api/library/themes/${theme.id}`, {
+        method: "PATCH",
+        body: { collapsed: !theme.collapsed },
+      });
+      Object.assign(theme, saved);
+      renderCanvas();
+    } catch (error) {
+      ctx.notify(`Could not roll that up: ${error.message}`, { kind: "warn" });
+    }
+    return;
+  }
   if (act === "play-theme") {
     const quotes = theme.refs.map((ref) => ctx.state.byRef.get(ref)).filter(Boolean);
     if (quotes.length) ctx.startQueue(quotes, theme.title);
@@ -883,7 +1303,15 @@ function onSurfaceInput(event) {
   const act = event.target.dataset.act;
   const themeId = event.target.closest(".area")?.dataset.theme;
   if (!themeId || (act !== "rename" && act !== "note")) return;
-  saveField(themeId, act === "rename" ? { title: event.target.value } : { note: event.target.value });
+  if (act === "rename") {
+    // A wrapping field will take a newline if pasted one. A title is one line.
+    const cleaned = event.target.value.replace(/[\r\n]+/g, " ");
+    if (cleaned !== event.target.value) event.target.value = cleaned;
+    fitTitles();
+    saveField(themeId, { title: cleaned });
+    return;
+  }
+  saveField(themeId, { note: event.target.value });
 }
 
 async function onInspectorAction(event) {
@@ -955,6 +1383,46 @@ async function placeFromTray(ref) {
   cardNode(ref, null)?.focus();
 }
 
+/**
+ * Turn grid view on or off.
+ *
+ * A view preference, so it stays in this browser rather than in the study's
+ * file: whether you are reading the arrangement or making it is about you at
+ * this moment, not about the analysis.
+ */
+function setGridView(on) {
+  gridView = on;
+  el.grid.setAttribute("aria-pressed", String(on));
+  remember(GRID_KEY, on ? "on" : "off");
+  renderCanvas();
+}
+
+/**
+ * Roll every area up, or open every one back up.
+ *
+ * Whichever there is more of decides: with anything still open this closes the
+ * lot, which is the gesture you want after finishing a pass and wanting to see
+ * the shape of the whole study at once.
+ */
+async function rollAll() {
+  const collapse = ctx.state.themes.some((theme) => !theme.collapsed);
+  const changing = ctx.state.themes.filter((theme) => Boolean(theme.collapsed) !== collapse);
+  if (!changing.length) return;
+  try {
+    await Promise.all(
+      changing.map((theme) =>
+        api(`/api/library/themes/${theme.id}`, {
+          method: "PATCH",
+          body: { collapsed: collapse },
+        }).then(({ theme: saved }) => Object.assign(theme, saved))
+      )
+    );
+  } catch (error) {
+    ctx.notify(`Could not roll those up: ${error.message}`, { kind: "warn" });
+  }
+  renderCanvas();
+}
+
 /* ---------------------------------------------------------------- setup -- */
 
 export function initCanvas(context) {
@@ -968,12 +1436,21 @@ export function initCanvas(context) {
     progress: $("canvas-progress"),
     addArea: $("canvas-add-area"),
     fit: $("canvas-fit"),
+    grid: $("canvas-grid"),
+    rollAll: $("canvas-collapse-all"),
     tray: $("tray"),
     trayBody: $("tray-body"),
     traySearch: $("tray-search"),
-    trayFilter: $("tray-filter"),
     trayCount: $("tray-count"),
+    traySummary: $("tray-summary"),
     trayToggle: $("tray-toggle"),
+    filterTag: $("filter-tag"),
+    filterSpeaker: $("filter-speaker"),
+    filterRecording: $("filter-recording"),
+    filterColor: $("filter-color"),
+    filterNote: $("filter-note"),
+    filterSort: $("filter-sort"),
+    filterClear: $("filter-clear"),
     inspector: $("inspector"),
   });
   bindPointers();
@@ -985,10 +1462,18 @@ export function initCanvas(context) {
   framed = remembered;
   el.tray.hidden = recall(TRAY_KEY, "open") === "shut";
   el.trayToggle.setAttribute("aria-expanded", String(!el.tray.hidden));
+  gridView = recall(GRID_KEY, "off") === "on";
+  el.grid.setAttribute("aria-pressed", String(gridView));
 
   el.viewport.addEventListener("wheel", onWheel, { passive: false });
   el.viewport.addEventListener("click", onSurfaceClick);
   el.viewport.addEventListener("input", onSurfaceInput);
+  el.viewport.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target.dataset.act === "rename") {
+      event.preventDefault();
+      event.target.blur();
+    }
+  });
   el.view.addEventListener("keydown", onKeyDown);
   el.surface.addEventListener("focusin", (event) => {
     const card = event.target.closest(".ccard");
@@ -1007,8 +1492,29 @@ export function initCanvas(context) {
     placeFromTray(item.dataset.ref);
   });
 
-  el.traySearch.addEventListener("input", debounce(renderTray, 120));
-  el.trayFilter.addEventListener("change", renderTray);
+  const refilter = () => {
+    renderTray();
+    markMatches();
+  };
+  el.traySearch.addEventListener("input", debounce(refilter, 120));
+  for (const select of [
+    el.filterTag, el.filterSpeaker, el.filterRecording,
+    el.filterColor, el.filterNote, el.filterSort,
+  ]) {
+    select.addEventListener("change", refilter);
+  }
+  el.filterClear.addEventListener("click", () => {
+    el.traySearch.value = "";
+    for (const select of [
+      el.filterTag, el.filterSpeaker, el.filterRecording, el.filterColor, el.filterNote,
+    ]) {
+      select.value = "";
+    }
+    refilter();
+  });
+
+  el.grid.addEventListener("click", () => setGridView(!gridView));
+  el.rollAll.addEventListener("click", rollAll);
   el.trayToggle.addEventListener("click", () => {
     el.tray.hidden = !el.tray.hidden;
     el.trayToggle.setAttribute("aria-expanded", String(!el.tray.hidden));

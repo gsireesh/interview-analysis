@@ -404,6 +404,11 @@ class ThemeStore:
             changed = True
 
         for theme in self._data["themes"]:
+            if "collapsed" not in theme:
+                theme["collapsed"] = False
+                changed = True
+
+        for theme in self._data["themes"]:
             columns = area_columns(theme["w"])
             for index, ref in enumerate(theme.get("refs") or []):
                 if self._card(ref, theme["id"]) is not None:
@@ -531,6 +536,7 @@ class ThemeStore:
             "y": y,
             "w": width,
             "h": height,
+            "collapsed": False,
             "created_at": _now(),
             "updated_at": _now(),
         }
@@ -574,6 +580,11 @@ class ThemeStore:
             theme["note"] = str(patch["note"] or "")
         if "color" in patch:
             theme["color"] = patch["color"] or None
+        if "collapsed" in patch:
+            # Rolled up to its title, keeping its size and everything in it. A
+            # study's themes are not all live at once, and a finished one taking
+            # up a screenful of plane is a finished one in the way.
+            theme["collapsed"] = bool(patch["collapsed"])
         theme["updated_at"] = _now()
         self._write()
         return theme

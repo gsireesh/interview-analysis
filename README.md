@@ -525,18 +525,23 @@ about. None of that is a field in the file; it is the arrangement, and the
 arrangement is the analysis.
 
 - **New area** makes a theme, in the middle of what you are looking at.
-- Drag quotes out of the **tray** on the right onto the plane. A study has
-  hundreds of quotes, so they wait in a list rather than being scattered across
-  the surface on first open. Search and filter it; a quote leaves the list once
-  it has a card anywhere.
-- Drag an area **by its header** and its quotes travel with it. Card positions
-  are stored relative to their area, so this is two numbers changing and nothing
-  can be left behind.
+- Drag quotes out of the **tray** on the left — same side as the board's
+  unsorted column — onto the plane. A study has hundreds of quotes, so they wait
+  in a list rather than being scattered across the surface on first open. A
+  quote leaves the list once it has a card anywhere.
+- Drag an area **by its title bar** and its quotes travel with it. Card
+  positions are stored relative to their area, so this is two numbers changing
+  and nothing can be left behind.
 - **Resize** from the bottom-right corner. Cards a smaller box no longer covers
   are pulled back inside rather than evicted — a quote does not stop being part
   of a theme because you dragged the box in.
-- **⊞ tidy** packs one area's cards back into a grid and grows it to fit, for
-  when free placement has become a pile.
+- **▾ rolls an area up** to its title, note and count, keeping its size and
+  everything in it. A study's themes are not all live at once, and a finished one
+  taking a screenful of plane is a finished one in the way. Quotes can still be
+  dropped on a rolled-up area — the theme is closed, not shut — and **Roll up
+  all** does the lot, for seeing the shape of the whole study at once.
+- **⊞ tidy** packs one area's cards into a grid *and writes it*, for when free
+  placement has become a pile you no longer want.
 - Drag a card **back to the tray** to put it away. Only that card: other copies
   of the same quote stay where they are.
 - Drop a card on **bare canvas** to park it. It counts as dealt with — it leaves
@@ -544,6 +549,49 @@ arrangement is the analysis.
 - **✕** deletes an area and offers an undo that restores the box, the note and
   the arrangement inside it. The quotes were never at risk: they live in the
   recordings, and without an area they simply return to the tray.
+
+### Theme names do not shrink
+
+Everything on the plane scales with the zoom except an area's title bar, which
+stays the size it would be in a sidebar. A quote shrinking as you pull back is
+fine — you are not reading it from there. A theme's *name* is what you navigate
+by, and a plane whose labels go illegible exactly when you zoom out to see all of
+them has given up the thing it was for.
+
+Holding that costs the bar some room, so it gives up its parts in order: the note
+and the recording spread go first, then the count, and the name keeps the width.
+A long name wraps rather than being cut off, and only shrinks — never below 9px —
+when a single word is wider than the whole area, which happens below about a
+quarter zoom. Zoomed out far enough, an area becomes a labelled tile, which is
+the right thing to be at a zoom where no quote is readable.
+
+### Grid, which changes nothing
+
+**Grid** draws every area's cards packed into rows and **writes nothing**. Free
+placement is the point of the plane, and it is also how an area ends up
+unreadable; this is how to read it without giving up the arrangement that made it
+unreadable. Turning it off puts everything back exactly where it was.
+
+It packs the same way `⊞ tidy` does, so it doubles as a preview of what tidying
+an area would commit. While it is on, a drag inside one area does nothing — there
+is nowhere to put anything — but dragging *between* areas still moves a card, and
+lands it in a clear slot.
+
+### Filters
+
+Sorting a pile of three hundred quotes is not one job. It is "everything Priya
+said about trust", then "the untagged remainder", then "the three long ones I
+keep putting off" — and without a way to ask for those, the tray is a scroll bar.
+So the list narrows by **text** (across the quote, its note, its tags and its
+speaker), **tag** (a named one, or anything tagged at all, or nothing tagged),
+**speaker**, **recording**, **highlight colour**, and **whether it carries a
+note**; and it orders by recording, by length, or by how many tags a quote has.
+Every dimension is an "and": the point of having six is to arrive at a handful.
+
+Filtering also marks the matching cards *already on the plane*, quieting the
+rest. Nothing is hidden and nothing moves — a filter is a question, and hiding a
+card would answer one nobody asked. It tells you the thing the list cannot: where
+the quotes you are asking about have already ended up.
 
 **The same quote can be pinned in two areas.** A card is one *appearance* of a
 quote, not the quote itself, so alt-drag (or **Also place in…**) leaves the
@@ -555,6 +603,10 @@ Without a mouse: tab to a quote in the tray and press enter to put it on the
 plane; tab to a card and the panel under the tray moves it between themes, arrow
 keys nudge it (shift for fine), delete puts it away. Drag the background to pan,
 ctrl- or ⌘-scroll to zoom, `0` to frame everything.
+
+Which areas are rolled up lives in the study's file, because it is a statement
+about the work. The zoom, the pan and whether grid view is on stay in the
+browser: those are about you at this moment, not about the analysis.
 
 A themes file written before the canvas existed has no coordinates in it. The
 first open lays those themes out in a grid and packs each one's quotes inside,

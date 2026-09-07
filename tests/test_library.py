@@ -908,6 +908,89 @@ def test_the_canvas_survives_a_reload(tmp_path, library):
     assert reopened.on_canvas_refs() == {"rec:q1"}
 
 
+def test_an_area_can_be_rolled_up_to_its_title(client):
+    """Rolling up hides quotes; it must not move or forget any of them.
+
+    A study's themes are not all live at once, and a finished one taking a
+    screenful of plane is a finished one in the way. But it is a drawing
+    decision, so what is inside keeps its size, its arrangement and its
+    membership -- the theme is closed, not shut.
+    """
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "Done with"}).json()["theme"]
+    assert theme["collapsed"] is False
+
+    ref = refs_of(api)[0]
+    api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"], "x": 40, "y": 120}
+    )
+
+    rolled = api.patch(
+        f"/api/library/themes/{theme['id']}", json={"collapsed": True}
+    ).json()["theme"]
+    assert rolled["collapsed"] is True
+    # The stored box is untouched, so opening it again is exact.
+    assert (rolled["w"], rolled["h"]) == (theme["w"], theme["h"])
+
+    body = api.get("/api/library/themes").json()
+    assert body["themes"][0]["refs"] == [ref]
+    assert body["cards"] == [{"ref": ref, "theme_id": theme["id"], "x": 40.0, "y": 120.0}]
+
+    opened = api.patch(
+        f"/api/library/themes/{theme['id']}", json={"collapsed": False}
+    ).json()["theme"]
+    assert opened["collapsed"] is False
+
+
+def test_a_quote_can_still_be_dropped_on_a_rolled_up_area(client):
+    """Closed, not shut: it takes quotes and files them where they will be found."""
+    api, _ = client
+    theme = api.post("/api/library/themes", json={"title": "Rolled"}).json()["theme"]
+    first, second = refs_of(api)[:2]
+    api.post(
+        "/api/library/canvas/place", json={"ref": first, "theme_id": theme["id"], "x": 14, "y": 84}
+    )
+    api.patch(f"/api/library/themes/{theme['id']}", json={"collapsed": True})
+
+    # Nothing is said about position: there is nowhere visible to name one.
+    body = api.post(
+        "/api/library/canvas/place", json={"ref": second, "theme_id": theme["id"]}
+    ).json()
+
+    assert set(body["themes"][0]["refs"]) == {first, second}
+    assert not overlapping(body["cards"])
+
+
+def test_being_rolled_up_survives_a_reload(tmp_path, library):
+    store = ThemeStore(library / THEMES_FILENAME)
+    theme = store.create("Kept")
+    store.update(theme["id"], {"collapsed": True})
+
+    reopened = ThemeStore(library / THEMES_FILENAME).list()[0]
+    assert reopened["collapsed"] is True
+
+
+def test_a_themes_file_from_before_rolling_up_reads_as_open(tmp_path):
+    """Absent is open. A theme nobody has closed is not closed."""
+    path = tmp_path / THEMES_FILENAME
+    path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "themes": [
+                    {
+                        "id": "t1", "title": "Old", "note": "", "color": None, "refs": [],
+                        "x": 0, "y": 0, "w": 520, "h": 400,
+                    }
+                ],
+                "cards": [],
+            }
+        )
+    )
+    assert ThemeStore(path).list()[0]["collapsed"] is False
+    assert json.loads(path.read_text())["themes"][0]["collapsed"] is False
+
+
 def test_a_file_from_a_later_version_is_not_downgraded(tmp_path):
     """Unknown fields survive, and so does the claim about which version wrote it."""
     path = tmp_path / THEMES_FILENAME

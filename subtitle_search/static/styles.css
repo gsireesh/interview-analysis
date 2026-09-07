@@ -2186,33 +2186,81 @@ mark.hl--noted::after {
   background: var(--marker-wash);
 }
 
-/* Above the cards, always. Positions are clamped so nothing should land here,
-   but a theme whose own name is hidden behind a quote is unusable, and stacking
-   order is a cheaper guarantee than trusting every path that writes a position. */
-.area__head {
+/* The title bar, which does not scale.
+ *
+ * Every length inside it is divided by --z, the canvas zoom, so it comes out the
+ * same size on screen at any zoom. A quote shrinking as you pull back is fine --
+ * you are not reading it from there. A theme's *name* is what you navigate by,
+ * and a plane whose labels go illegible exactly when you zoom out to see all of
+ * them has given up the thing it was for.
+ *
+ * Two consequences, both deliberate. It sits above the cards, so a theme's name
+ * can never be hidden behind a quote. And below about 75% zoom it grows past the
+ * room reserved for it and covers the top of the first row -- which is why it
+ * has an opaque ground: it then reads as a title bar laid over the cards, which
+ * is exactly what it is, rather than as a collision.
+ */
+.area__chrome {
   position: relative;
   z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 0.625rem 0.25rem;
+  /* Laid out at z times the area's width and then scaled by 1/z, which cancels
+     the surface's own scale: the bar spans the area on screen while every length
+     inside it is measured in unzoomed pixels. Both factors come from JS rather
+     than from a calc, so nothing here depends on dividing by a custom property. */
+  width: calc(100% * var(--z, 1));
+  transform: scale(var(--inv-z, 1));
+  transform-origin: 0 0;
+  background: color-mix(in srgb, var(--paper-raised) 62%, var(--paper-sunk));
+  border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
+  border-radius: 2px 2px 0 0;
+  /* Zoomed out, or with a name long enough to wrap, the bar is taller than the
+     room reserved for it and lies over the first row of cards. The shadow says
+     so: a label floating above the contents, which is what it is, rather than
+     cards that have been cut off. */
+  box-shadow: 0 3px 6px -3px rgba(0, 0, 0, 0.18);
   cursor: grab;
 }
 
-.area--moving .area__head { cursor: grabbing; }
+/* Nothing to float above. */
+.area--collapsed .area__chrome, .area:not(:has(.ccard)) .area__chrome { box-shadow: none; }
 
+.area--moving .area__chrome { cursor: grabbing; }
+
+.area__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  padding: 8px 10px 2px;
+}
+
+.area__head .icon-btn, .area__count { margin-top: 1px; }
+
+.area__roll { font-size: 9px; width: 14px; text-align: center; }
+
+/* A wrapping field, so a long theme name loses none of itself when there is not
+   the width for one line. Its height is followed by fitTitles(). */
 .area__title {
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: 13px;
   font-weight: 600;
+  line-height: 1.3;
   letter-spacing: 0.01em;
   color: var(--ink);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 2px;
-  padding: 0.125rem 0.25rem;
+  padding: 2px 4px;
   min-width: 0;
   flex: 1;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  display: block;
+  /* Break a word only when nothing else will fit it, which after fitTitles has
+     shrunk the type to the floor means almost never -- and never silently, since
+     the alternative there is cutting the name off. */
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .area__title:hover { border-color: var(--rule); }
@@ -2220,33 +2268,67 @@ mark.hl--noted::after {
 
 .area__count {
   font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: 11px;
   color: var(--ink);
   background: var(--paper-sunk);
   border-radius: 999px;
-  padding: 0.05rem 0.4rem;
+  padding: 1px 6px;
 }
 
-.area__spread { font-family: var(--mono); font-size: 0.5625rem; color: var(--ink-faint); }
+.area__tools { display: flex; gap: 1px; margin-left: auto; flex: none; }
+
+.area__sub {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 10px 5px;
+}
+
+.area__spread { font-family: var(--mono); font-size: 9px; color: var(--ink-faint); flex: none; }
+
+/* Out of room. The name has its own row and keeps it; the note, the spread and
+   the buttons share the second one and are what pay. Losing that row also pulls
+   the bar back inside the space reserved for it, so it stops covering the first
+   row of cards -- the two problems have one cure. Narrower still and the count
+   goes too, leaving the name the whole bar. */
+.area--tight .area__sub { display: none; }
+/* Every pixel the bar gives back is a pixel of the first card row it stops
+   covering, so tight mode also trims its own padding. */
+.area--tight .area__head { padding: 5px 8px 4px; }
+.area--cramped .area__count { display: none; }
+
+.area__chrome .icon-btn { font-size: 11px; padding: 2px 4px; }
 
 .area__note {
-  position: relative;
-  z-index: 3;
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: 11px;
   font-style: italic;
   color: var(--ink-soft);
   background: transparent;
   border: 0;
   border-bottom: 1px solid transparent;
-  width: calc(100% - 1.25rem);
-  margin: 0 0.625rem 0.25rem;
-  padding: 0.05rem 0;
+  flex: 1;
+  min-width: 0;
+  padding: 1px 0;
 }
 
 .area__note:hover { border-bottom-color: var(--rule); }
 .area__note:focus { border-bottom-color: var(--marker); outline: none; }
 .area__note::placeholder { color: var(--ink-faint); font-style: normal; }
+
+/* Rolled up: the title bar and nothing else, sized to it rather than to a
+   stored height, so it stays one bar tall at every zoom. What is inside keeps
+   its size and its arrangement, and a quote can still be dropped on it -- the
+   theme is closed, not shut. */
+.area--collapsed {
+  /* fitChrome sets the height: the bar's own, converted out of screen pixels
+     into canvas units. "auto" would measure the bar's layout box, which is a
+     zoom's worth too short. */
+  border-style: solid;
+  background: color-mix(in srgb, var(--paper-raised) 40%, transparent);
+}
+
+.area--collapsed .area__chrome { border-bottom: 0; border-radius: 2px; }
 
 .area__empty {
   position: absolute;
@@ -2385,22 +2467,86 @@ mark.hl--noted::after {
 
 /* -- the tray: quotes not out on the plane yet -- */
 
+/* On the left, where the board keeps its unsorted column: the pile you are
+   working from is the same pile in both views, and it should not move house
+   between them. */
 .tray {
   flex: none;
   width: 19rem;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
   background: var(--paper);
 }
 
 .tray__head {
   display: flex;
+  flex-direction: column;
   gap: 0.375rem;
   padding: 0.5rem;
   border-bottom: 1px solid var(--rule);
   flex: none;
+}
+
+/* Six narrow controls in two columns rather than six full-width rows: the list
+   under them is the point, and a filter bar that eats half the panel is a filter
+   bar you stop using. */
+.tray__filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem 0.375rem;
+}
+
+.tray__filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
+  min-width: 0;
+}
+
+.tray__filter > span {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: lowercase;
+  color: var(--ink-faint);
+  padding-left: 0.125rem;
+}
+
+.tray__filter select { width: 100%; }
+
+.tray__state {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.125rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+}
+
+.btn--bare {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--marker);
+  text-decoration: underline;
+  margin-left: auto;
+}
+
+.btn--bare:hover { color: var(--marker); border: 0; }
+
+.tray__tags {
+  margin: 0.25rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tray__search, .tray__head select {
@@ -2415,7 +2561,6 @@ mark.hl--noted::after {
   min-width: 0;
 }
 
-.tray__search { flex: 1; }
 .tray__search:focus, .tray__head select:focus { border-color: var(--marker); outline: none; }
 
 .tray__body {
@@ -2527,8 +2672,8 @@ mark.hl--noted::after {
 
 @media (max-width: 60rem) {
   /* Below this the tray and the plane are fighting over the same screen. The
-     plane wins: the tray is a drawer you open, and it takes the whole width. */
-  .tray { position: absolute; right: 0; top: 0; bottom: 0; z-index: 40; width: 16rem; }
+     plane wins: the tray becomes a drawer over the left-hand edge. */
+  .tray { position: absolute; left: 0; top: 0; bottom: 0; z-index: 40; width: 16rem; }
   .canvas__body { position: relative; }
 }
 
@@ -2556,4 +2701,18 @@ mark.hl--noted::after {
   font-family: var(--mono);
   font-size: 0.625rem;
   color: var(--ink-faint);
+}
+
+/* A filter is a question, not an instruction to hide things.
+ *
+ * So nothing disappears from the plane and nothing moves. The cards that answer
+ * the question are ringed, and the rest are left alone but quieted -- which
+ * tells you the thing the tray cannot: where the quotes you are asking about
+ * have already ended up. Clearing the filters takes it all back. */
+.canvas__surface--filtering .ccard { opacity: 0.55; }
+
+.canvas__surface--filtering .ccard--match {
+  opacity: 1;
+  border-color: var(--marker);
+  box-shadow: 0 0 0 2px var(--marker-wash), 0 1px 2px rgba(0, 0, 0, 0.08);
 }

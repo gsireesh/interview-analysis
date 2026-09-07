@@ -51,12 +51,69 @@
       <button class="btn btn--icon" data-zoom="in" type="button" aria-label="Zoom in">+</button>
       <button class="btn" id="canvas-fit" type="button" title="Frame everything (0)">Fit</button>
     </span>
+    <!-- Reading the arrangement rather than making it: every card packed into
+         its area's grid, and not a single stored position touched. -->
+    <button class="btn" id="canvas-grid" type="button" aria-pressed="false"
+            title="Show every area packed into a grid, without moving anything">Grid</button>
+    <button class="btn" id="canvas-collapse-all" type="button"
+            title="Roll every area up to its title">Roll up all</button>
     <span class="board__hint" id="canvas-progress"></span>
     <button class="btn" id="tray-toggle" type="button" aria-expanded="true"
             aria-controls="tray">Quotes <span class="count" id="tray-count">0</span></button>
   </div>
 
   <div class="canvas__body">
+    <!-- The quotes not out on the plane yet, on the left, where the board keeps
+         its unsorted column. A study has hundreds; scattering them all across
+         the surface would be a mess nobody would sort. -->
+    <aside class="tray" id="tray">
+      <header class="tray__head">
+        <input class="tray__search" id="tray-search" type="search" placeholder="Search text"
+               aria-label="Search the text of the quotes not yet on the canvas">
+        <div class="tray__filters">
+          <label class="tray__filter">
+            <span>Tag</span>
+            <select id="filter-tag" aria-label="Filter by tag"></select>
+          </label>
+          <label class="tray__filter">
+            <span>Said by</span>
+            <select id="filter-speaker" aria-label="Filter by speaker"></select>
+          </label>
+          <label class="tray__filter">
+            <span>From</span>
+            <select id="filter-recording" aria-label="Filter by recording"></select>
+          </label>
+          <label class="tray__filter">
+            <span>Colour</span>
+            <select id="filter-color" aria-label="Filter by highlight colour"></select>
+          </label>
+          <label class="tray__filter">
+            <span>Note</span>
+            <select id="filter-note" aria-label="Filter by whether the quote has a note">
+              <option value="">either</option>
+              <option value="yes">has a note</option>
+              <option value="no">no note</option>
+            </select>
+          </label>
+          <label class="tray__filter">
+            <span>Sort</span>
+            <select id="filter-sort" aria-label="How to order the list">
+              <option value="recording">by recording</option>
+              <option value="longest">longest first</option>
+              <option value="shortest">shortest first</option>
+              <option value="tags">most tags first</option>
+            </select>
+          </label>
+        </div>
+        <p class="tray__state">
+          <span id="tray-summary"></span>
+          <button class="btn btn--bare" id="filter-clear" type="button" hidden>Clear</button>
+        </p>
+      </header>
+      <div class="tray__body" id="tray-body"></div>
+      <footer class="tray__foot" id="inspector"></footer>
+    </aside>
+
     <div class="canvas__viewport" id="canvas-viewport" tabindex="0"
          aria-label="Theme canvas. Drag to pan, ctrl and scroll to zoom.">
       <div class="canvas__surface" id="canvas-surface"></div>
@@ -69,22 +126,6 @@
         <span class="canvas__keys">drag the background to pan · ctrl-scroll or ⌘-scroll to zoom · 0 to frame everything</span>
       </p>
     </div>
-
-    <!-- The quotes not out on the plane yet. A study has hundreds; scattering
-         them all would be a mess nobody would sort. -->
-    <aside class="tray" id="tray">
-      <header class="tray__head">
-        <input class="tray__search" id="tray-search" type="search" placeholder="Search quotes"
-               aria-label="Search the quotes not yet on the canvas">
-        <select id="tray-filter" aria-label="Which quotes to list">
-          <option value="all">every quote</option>
-          <option value="tagged">only tagged</option>
-          <option value="untagged">only untagged</option>
-        </select>
-      </header>
-      <div class="tray__body" id="tray-body"></div>
-      <footer class="tray__foot" id="inspector"></footer>
-    </aside>
   </div>
 </main>
 
