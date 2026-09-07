@@ -2585,26 +2585,33 @@ mark.hl--noted::after {
 .tray__item:hover { border-color: var(--ink-faint); }
 .tray__item:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
+/* Whole, never clipped.
+ *
+ * A card on the plane is a tile in a layout and has to hold a fixed size; this
+ * list does not. Deciding which theme a quote belongs to means reading the
+ * quote, and a list of quotes cut off at three lines makes you drag each one out
+ * to find out what it says -- which is the decision, done backwards. */
 .tray__text {
   font-family: var(--serif);
   font-size: 0.75rem;
   line-height: 1.45;
   margin: 0 0 0.25rem;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
 }
 
 .tray__meta {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 0.5rem;
   margin: 0;
   font-size: 0.5625rem;
   color: var(--ink-faint);
 }
+
+/* The speaker takes what is left, so the time and the way out keep their place
+   down the right-hand edge however long a name is. */
+.tray__who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tray__meta .icon-btn { text-decoration: none; margin: -2px -2px -2px 0; }
 
 .tray__meta time { font-family: var(--mono); }
 

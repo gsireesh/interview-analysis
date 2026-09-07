@@ -378,6 +378,21 @@ function clampToArea(theme, x, y) {
 
 /* ------------------------------------------------------------ rendering -- */
 
+/**
+ * The way back to where a quote was said.
+ *
+ * A new tab, always. Following it in place would throw away the canvas -- the
+ * pan, the zoom, what was selected, a filter halfway through being narrowed --
+ * to answer a question that is usually "wait, what came before this?". The point
+ * of checking the context is to come back with it, and the arrangement should
+ * still be there when you do.
+ */
+function readerLink(quote) {
+  return `<a class="icon-btn" data-act="open" target="_blank" rel="noopener"
+             href="/reader?recording=${encodeURIComponent(quote.recording_id)}&t=${quote.start_time}"
+             title="Open in the transcript, in a new tab">↗</a>`;
+}
+
 /** The card as it appears on the plane: short, and playable where it stands. */
 function cardMarkup(quote, card) {
   const recording = ctx.state.recordings.get(quote.recording_id);
@@ -394,9 +409,7 @@ function cardMarkup(quote, card) {
         <span class="ccard__who">${escapeHtml(quote.speaker || recording?.title || quote.recording_id)}</span>
         <time>${formatTime(quote.start_time)}</time>
         <button class="icon-btn" data-act="play" type="button" title="Play this quote">▶</button>
-        <a class="icon-btn" data-act="open"
-           href="/reader?recording=${encodeURIComponent(quote.recording_id)}&t=${quote.start_time}"
-           title="Open in the transcript">↗</a>
+        ${readerLink(quote)}
       </footer>
       ${tags ? `<p class="ccard__tags" title="${escapeHtml(tags)}">${escapeHtml(tags)}</p>` : ""}
     </article>`;
@@ -682,8 +695,9 @@ function renderTray() {
                    title="Drag onto the canvas, or press enter">
             <p class="tray__text">${escapeHtml(quote.text)}</p>
             <p class="tray__meta">
-              <span>${escapeHtml(quote.speaker || quote.recording_title || "")}</span>
+              <span class="tray__who">${escapeHtml(quote.speaker || quote.recording_title || "")}</span>
               <time>${formatTime(quote.start_time)}</time>
+              ${readerLink(quote)}
             </p>
             ${
               (quote.tags || []).length
@@ -1032,6 +1046,8 @@ function onPointerDown(event) {
 function onTrayPointerDown(event) {
   const item = event.target.closest(".tray__item");
   if (!item || event.button !== 0) return;
+  // The link out of a tray quote keeps its own job, as on a card.
+  if (event.target.closest("a, button")) return;
   event.preventDefault();
   const { card_w, card_h } = metrics();
   item.focus({ preventScroll: true });
@@ -1488,6 +1504,8 @@ export function initCanvas(context) {
   el.trayBody.addEventListener("keydown", (event) => {
     const item = event.target.closest(".tray__item");
     if (!item || (event.key !== "Enter" && event.key !== " ")) return;
+    // Enter on the link out follows it; enter on the quote places it.
+    if (event.target.closest("a, button")) return;
     event.preventDefault();
     placeFromTray(item.dataset.ref);
   });

@@ -529,6 +529,11 @@ arrangement is the analysis.
   unsorted column — onto the plane. A study has hundreds of quotes, so they wait
   in a list rather than being scattered across the surface on first open. A
   quote leaves the list once it has a card anywhere.
+
+  Tray quotes are shown **whole**, never cut off, and each carries a **↗** to
+  where it was said. Deciding which theme a quote belongs to means reading it,
+  and a truncated list makes you drag each one out to find out what it says —
+  which is the decision, done backwards.
 - Drag an area **by its title bar** and its quotes travel with it. Card
   positions are stored relative to their area, so this is two numbers changing
   and nothing can be left behind.
@@ -598,6 +603,12 @@ quote, not the quote itself, so alt-drag (or **Also place in…**) leaves the
 original where it is and puts a second card elsewhere — photocopying a post-it to
 pin it to two walls. On the board those show as one quote in two columns, each
 card saying where else it appears.
+
+Every **↗** — on a tray quote, on a card, on the board, in the matrix — opens
+the transcript in a **new tab**. Following it in place would throw away the pan,
+the zoom, the selection and a half-narrowed filter to answer a question that is
+usually "wait, what came before this?". The point of checking the context is to
+come back with it.
 
 Without a mouse: tab to a quote in the tray and press enter to put it on the
 plane; tab to a card and the panel under the tray moves it between themes, arrow

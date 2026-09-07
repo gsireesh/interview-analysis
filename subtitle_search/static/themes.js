@@ -221,8 +221,9 @@ function quoteCard(quote, { draggable = true, column = null } = {}) {
         <time>${formatTime(quote.start_time)}</time>
         <span class="qcard__tools">
           <button class="icon-btn" data-act="play" title="Play this quote">▶</button>
-          <a class="icon-btn" href="/reader?recording=${encodeURIComponent(quote.recording_id)}&t=${quote.start_time}"
-             title="Open in the transcript">↗</a>
+          <a class="icon-btn" target="_blank" rel="noopener"
+             href="/reader?recording=${encodeURIComponent(quote.recording_id)}&t=${quote.start_time}"
+             title="Open in the transcript, in a new tab">↗</a>
         </span>
       </div>
       ${quote.note ? `<p class="qcard__note">${escapeHtml(quote.note)}</p>` : ""}
