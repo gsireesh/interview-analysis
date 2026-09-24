@@ -25,7 +25,7 @@ Tiered, so the part you use daily has the fewest ways to break:
 | | |
 |---|---|
 | core | `fastapi`, `uvicorn`, `rapidfuzz` — reading, correcting, quoting |
-| `analysis` | `numpy`, `scikit-learn` — the map, graph and signals |
+| `analysis` | `numpy`, `scikit-learn` — the signals |
 | `neural` | `sentence-transformers` — paraphrase-aware similarity |
 | `align` | `torch`, `transformers` — [measured word timings](#word-timings) |
 | `dev` | `pytest`, `httpx` |
@@ -41,13 +41,14 @@ be pinned in the lockfile.
 The extras are genuinely optional: `semantics.py` and `alignment.py` import their
 heavy dependencies *inside* their functions, so the app starts, the reader and
 library work, and only the features that need them return a 503 that names the
-fix. Every rung degrades to the one below — UMAP to t-SNE to PCA, the language
-model to word overlap, measured timings to interpolated ones.
+fix. Every rung degrades to the one below — the language model to word
+overlap, measured timings to interpolated ones.
 
 Every requirement carries an upper bound, and `uv.lock` pins the resolved graph
 of all 80 packages. This matters more than install size for a tool meant to open
 a study years after it was recorded: without a ceiling, a future scikit-learn
-that changed a clustering default would quietly reshuffle your map.
+that changed a TF-IDF or SVD default would quietly reshuffle which quotes the
+signals call outliers.
 
 ## What it expects
 
@@ -503,10 +504,11 @@ in the reader.
 
 ## Themes: analysis across recordings
 
-`/themes` works on every quote in the library at once, in several views. They
-exist because the work has several shapes, and no single layout serves all of
-them. The canvas and the board are two shapes of the *same* grouping — a theme
-made on either appears on the other, because there is one file underneath.
+`/themes` works on every quote in the library at once, in three views. The
+**canvas** and the **board** are two shapes of the *same* grouping — a theme made
+on either appears on the other, because there is one file underneath — and
+**signals** reads the corpus rather than your codebook, to say whether the study
+is still finding anything new.
 
 ### Canvas — affinity diagramming on a plane
 
@@ -621,7 +623,7 @@ original where it is and puts a second card elsewhere — photocopying a post-it
 pin it to two walls. On the board those show as one quote in two columns, each
 card saying where else it appears.
 
-Every **↗** — on a tray quote, on a card, on the board, in the matrix — opens
+Every **↗** — on a tray quote, on a card, on the board — opens
 the transcript in a **new tab**. Following it in place would throw away the pan,
 the zoom, the selection and a half-narrowed filter to answer a question that is
 usually "wait, what came before this?". The point of checking the context is to
@@ -655,55 +657,12 @@ between a theme and one person's preoccupation. The filter narrows the board to
 unsorted, tagged, or untagged quotes so you can work through a pile rather than
 stare at all of it.
 
-### Matrix — for when they do
-
-Tags down the side, recordings across the top, counts in the cells. Rows are
-sorted by how many recordings share the tag, so the findings float to the top and
-the singletons sink. Cell weight is ink, not a colour ramp, so a row reads at a
-glance without matching swatches to a legend.
-
-Click a tag for every quote carrying it; click a cell for one participant's.
-
-### Pairs — for when the codebook has drifted
-
-Tags that share a quote, strongest first. Two codes that always arrive together
-are usually one code wearing two names, or a cause and its effect. It is the
-cheapest signal that a codebook needs consolidating.
-
-### Map — for arguing with your codebook
+### Signals — is the study finished?
 
 ```bash
-pip install -e '.[analysis]'          # the map, graph and signals
+pip install -e '.[analysis]'          # the signals
 pip install -e '.[analysis,neural]'   # + understands paraphrase
 ```
-
-Every quote placed by what it *says*, not by what you tagged it. The clusters
-here are formed by the language, so they can disagree with your themes — and
-where they do is either a theme you missed or a distinction you decided not to
-make. Drag a loop around a group to turn it into a theme.
-
-Colour by your themes, by the clusters the language forms, or by recording.
-Click any point for the quote and its nearest neighbours in meaning, and click
-through those to walk the corpus by similarity rather than by tag.
-
-Two backends. **Word overlap** is the default: instant, local, no download, and
-honestly limited — it cannot tell that *"it never works"* and *"constantly
-broken"* are the same complaint. The **language model** can, and the difference
-is stark; on the same pair of quotes about consent and cloud storage, word
-overlap scores `0.00` and the model scores `0.34`.
-
-The model is the one thing in this tool that touches the network: it downloads
-once, then lives on your machine, and vectors are cached in
-`library.embeddings.npz` so it is paid for once. **Your quotes are never sent
-anywhere** — encoding happens in this process.
-
-### Graph — the shape of the codebook
-
-Tags as a network, pulled together by the quotes they share. The same numbers as
-Pairs, arranged so you can see what clumps, what dangles off the side, and what
-sits on its own.
-
-### Signals — is the study finished?
 
 The grounded-theory question, drawn as the curve it actually is: cumulative
 distinct tags against interviews, in the order they were recorded. A curve still
@@ -715,8 +674,20 @@ Underneath: the quotes least like anything else. Negative cases are where a
 theme's real boundary is, and they are the easiest thing to lose because nothing
 groups them.
 
-**Nothing here files anything.** Every cluster and every ranking is a proposal;
-a person accepts it or does not.
+What counts as "least like" depends on which backend is reading. **Word overlap**
+is the default: instant, local, no download, and honestly limited — it cannot tell
+that *"it never works"* and *"constantly broken"* are the same complaint. The
+**language model** can, and the difference is stark; on the same pair of quotes
+about consent and cloud storage, word overlap scores `0.00` and the model scores
+`0.34`. The checkbox switches between them.
+
+The model is the one thing in this tool that touches the network: it downloads
+once, then lives on your machine, and vectors are cached in
+`library.embeddings.npz` so it is paid for once. **Your quotes are never sent
+anywhere** — encoding happens in this process.
+
+**Nothing here files anything.** Every ranking is a proposal; a person accepts
+it or does not.
 
 ### Listening to a theme
 

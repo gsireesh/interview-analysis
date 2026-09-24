@@ -30,7 +30,6 @@ from .library import (
     THEMES_FILENAME,
     ThemeStore,
     all_quotes,
-    cooccurrence,
     metrics as canvas_metrics,
     packing_order,
     tag_index,
@@ -354,7 +353,6 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             "quote_count": len(quotes),
             "untagged_count": len(untagged(quotes)),
             "tags": tag_index(quotes),
-            "cooccurrence": cooccurrence(quotes, minimum=1),
             "colors": list(COLORS),
         }
 
@@ -418,10 +416,6 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             return {"themes": themes().assign(ref, payload.get("theme_id"), payload.get("index"))}
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="unknown theme") from exc
-
-    @app.post("/api/library/themes/order")
-    def reorder_themes(payload: dict = Body(...)) -> dict:
-        return {"themes": themes().reorder(list(payload.get("order") or []))}
 
     # -- the canvas: the same themes, laid out on a plane -------------------
     #
@@ -521,90 +515,28 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
         app.state.semantics = (fingerprint, model)
         return model
 
-    @app.get("/api/library/semantics")
-    def get_semantics(
+    @app.get("/api/library/signals")
+    def get_signals(
         neural: bool = Query(False, description="use the sentence-transformer model"),
-        clusters: int = Query(0, ge=0, le=20),
     ) -> dict:
+        """Is the study finished, and what refuses to group with anything.
+
+        Deliberately narrow. This used to be one corner of a response that also
+        laid out a scatter plot and clustered it, and both of those cost a
+        projection and a silhouette sweep that this view then threw away.
+        """
         quotes = corpus()
         try:
             model = semantics_for(quotes, neural)
-            coords = model.project()
-            labels, count = model.cluster(clusters or None)
-            terms = model.cluster_terms(labels)
         except SemanticsUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-        grouped: dict[int, list[str]] = {}
-        for ref, label in zip(model.refs, labels):
-            grouped.setdefault(int(label), []).append(ref)
 
         return {
             "backend": model.backend,
-            "projector": model.projector,
             "neural_available": neural_available(),
-            "points": [
-                {"ref": ref, "x": round(x, 5), "y": round(y, 5), "cluster": int(label)}
-                for ref, (x, y), label in zip(model.refs, coords, labels)
-            ],
-            "clusters": [
-                {
-                    "id": label,
-                    "size": len(refs),
-                    "terms": terms.get(label, []),
-                    "refs": refs,
-                }
-                for label, refs in sorted(grouped.items())
-            ],
-            "cluster_count": count,
             "loneliest": model.loneliest(),
             "saturation": saturation(quotes, [r.summary() for r in registry.list()]),
         }
-
-    @app.get("/api/library/similar")
-    def get_similar(
-        ref: str = Query(...), k: int = Query(6, ge=1, le=40), neural: bool = Query(False)
-    ) -> dict:
-        try:
-            model = semantics_for(corpus(), neural)
-            return {"ref": ref, "similar": model.similar(ref, count=k)}
-        except SemanticsUnavailable as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    @app.get("/api/library/suggestions")
-    def get_suggestions(neural: bool = Query(False)) -> dict:
-        """Where each unsorted quote would go, judged by the company it keeps."""
-        quotes = corpus()
-        store = themes()
-        placed = {ref: theme["id"] for theme in store.list() for ref in theme["refs"]}
-        if not placed:
-            return {"suggestions": []}
-        try:
-            model = semantics_for(quotes, neural)
-        except SemanticsUnavailable as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-        out = []
-        for quote in quotes:
-            if quote["ref"] in placed:
-                continue
-            hint = model.suggest_theme(quote["ref"], placed)
-            if hint:
-                out.append({"ref": quote["ref"], **hint})
-        out.sort(key=lambda s: -s["confidence"])
-        return {"suggestions": out}
-
-    @app.post("/api/library/themes/from-refs", status_code=201)
-    def theme_from_refs(payload: dict = Body(...)) -> dict:
-        """Make a theme out of a set of quotes, as drawn on the map."""
-        refs = [str(ref) for ref in (payload.get("refs") or [])]
-        if not refs:
-            raise HTTPException(status_code=400, detail="no quotes were selected")
-        store = themes()
-        theme = store.create(payload.get("title", ""), payload.get("color"))
-        for ref in refs:
-            store.assign(ref, theme["id"])
-        return {"theme": theme, **store.state()}
 
     # -- pages -------------------------------------------------------------
 

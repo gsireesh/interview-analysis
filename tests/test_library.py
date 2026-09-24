@@ -952,19 +952,6 @@ def test_the_board_and_the_canvas_are_one_grouping(client):
     assert body["on_canvas"] == [ref]
 
 
-def test_a_lassoed_theme_arrives_on_the_canvas_too(client):
-    """The map's "make a theme from these" has to answer with the whole canvas."""
-    api, _ = client
-    refs = refs_of(api)[:3]
-    body = api.post(
-        "/api/library/themes/from-refs", json={"title": "Lassoed", "refs": refs}
-    ).json()
-
-    assert set(body["theme"]["refs"]) == set(refs)
-    assert {c["ref"] for c in body["cards"]} == set(refs)
-    assert not overlapping(body["cards"])
-
-
 def test_canvas_calls_against_an_unknown_theme_are_404s(client):
     api, _ = client
     ref = refs_of(api)[0]

@@ -1292,21 +1292,6 @@ mark.hl--noted::after {
 
 .results-strip { margin-bottom: 1rem; }
 
-.dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  margin-right: 0.4rem;
-  vertical-align: middle;
-}
-
-.dot--amber { background: var(--dot-amber); }
-.dot--teal { background: var(--dot-teal); }
-.dot--rose { background: var(--dot-rose); }
-.dot--violet { background: var(--dot-violet); }
-.dot--sage { background: var(--dot-sage); }
-
 /* ============================================================ quote cards ==*/
 
 .qgrid {
@@ -1477,105 +1462,6 @@ mark.hl--noted::after {
 
 .column__body--over { background: var(--marker-wash); outline: 1px dashed var(--marker); }
 
-/* ================================================================= matrix ==*/
-
-.matrix-wrap { overflow-x: auto; }
-
-.matrix { border-collapse: collapse; font-size: 0.75rem; }
-
-.matrix th, .matrix td {
-  border: 1px solid var(--rule-soft);
-  padding: 0.3rem 0.5rem;
-  text-align: center;
-}
-
-.matrix__corner, .matrix__tag {
-  text-align: left;
-  position: sticky;
-  left: 0;
-  background: var(--paper);
-  white-space: nowrap;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.matrix__tag:hover { color: var(--marker); }
-
-.matrix__spread {
-  font-family: var(--mono);
-  font-size: 0.5625rem;
-  color: var(--ink-faint);
-  margin-left: 0.5rem;
-}
-
-.matrix__rec span {
-  display: block;
-  max-width: 7rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--mono);
-  font-size: 0.625rem;
-  font-weight: 500;
-}
-
-.matrix__cell {
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-faint);
-  cursor: pointer;
-  min-width: 2.5rem;
-}
-
-/* Ink weight, not a heat ramp: a row you can read at a glance without matching
-   colours against a legend. */
-.matrix__cell--on {
-  background: color-mix(in srgb, var(--marker) calc(var(--weight) * 22%), transparent);
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.matrix__cell--on:hover { outline: 1px solid var(--marker); }
-.matrix__total { font-family: var(--mono); color: var(--ink-soft); }
-.matrix__row--focus th, .matrix__row--focus td { border-color: var(--marker); }
-
-/* ================================================================== pairs ==*/
-
-.pair {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: 0;
-  border-bottom: 1px solid var(--rule-soft);
-  padding: 0.5rem 0.25rem;
-  cursor: pointer;
-  font: inherit;
-}
-
-.pair:hover { background: var(--paper-raised); }
-.pair__names { display: flex; align-items: center; gap: 0.5rem; }
-
-/* The bar is the number: how often these two codes arrive together. */
-.pair__link {
-  display: inline-block;
-  height: 3px;
-  width: calc(2rem + var(--share) * 7rem);
-  border-radius: 2px;
-  background: var(--marker);
-  opacity: calc(0.35 + var(--share) * 0.65);
-}
-
-.pair__counts {
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 0.625rem;
-  color: var(--ink-faint);
-}
-
-.pair__quotes { padding: 0.5rem 0 1rem; }
-
 /* ================================================================== queue ==*/
 
 /* Listening to a theme end to end. Tone is half of what a quote means and it
@@ -1642,149 +1528,14 @@ mark.hl--noted::after {
 
 .qcard__move:focus { border-color: var(--marker); outline: none; }
 
-/* ============================================================== semantic ==
+/* ============================================================== signals ==
  *
- * Views that read the corpus rather than the codebook. They get the same quiet
- * palette as everything else, because a scatter plot in research colours would
- * read as a result rather than as a proposal to argue with.
+ * Whether the study is still finding new tags, and what refuses to group. It
+ * gets the same quiet palette as everything else, because a chart in research
+ * colours would read as a result rather than as a proposal to argue with.
  */
 
-.stage { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-h)); }
-
-.stage__toolbar {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.625rem 1.5rem;
-  border-bottom: 1px solid var(--rule);
-  flex-wrap: wrap;
-}
-
-.stage__toolbar .board__hint { margin-left: 0; }
-.stage__toolbar .btn { margin-left: auto; }
-
-.stage__body { flex: 1; display: flex; min-height: 0; }
-
-.stage__side {
-  flex: 0 0 24rem;
-  border-left: 1px solid var(--rule);
-  background: var(--paper-sunk);
-  overflow-y: auto;
-  padding: 0.75rem;
-}
-
-.side__title {
-  margin: 0.75rem 0 0.25rem;
-  font-size: 0.625rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.11em;
-  color: var(--ink-faint);
-}
-
 .side__note { margin: 0 0 0.625rem; font-size: 0.6875rem; color: var(--ink-soft); line-height: 1.55; }
-
-.qgrid--one { grid-template-columns: 1fr; }
-
-/* ------------------------------------------------------------------ map -- */
-
-.map { flex: 1; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
-
-.map__dot {
-  fill: var(--ink-faint);
-  fill-opacity: 0.75;
-  stroke: var(--paper);
-  stroke-width: 1.5;
-  cursor: pointer;
-  transition: r 120ms ease;
-}
-
-.map__dot:hover, .map__dot:focus-visible { r: 9; fill-opacity: 1; }
-
-.map__dot--unplaced { fill: var(--ink-faint); fill-opacity: 0.35; }
-.map__dot--amber { fill: var(--dot-amber); }
-.map__dot--teal { fill: var(--dot-teal); }
-.map__dot--rose { fill: var(--dot-rose); }
-.map__dot--violet { fill: var(--dot-violet); }
-.map__dot--sage { fill: var(--dot-sage); }
-
-.map__dot--picked { stroke: var(--marker); stroke-width: 3; }
-
-.map__lasso {
-  fill: var(--marker);
-  fill-opacity: 0.08;
-  stroke: var(--marker);
-  stroke-width: 1.5;
-  stroke-dasharray: 4 3;
-}
-
-.neighbour {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: 0;
-  border-left: 2px solid var(--rule);
-  padding: 0.4rem 0.6rem;
-  margin-bottom: 0.25rem;
-  cursor: pointer;
-  font: inherit;
-}
-
-.neighbour:hover { background: var(--paper-raised); border-left-color: var(--marker); }
-
-/* The score is the whole point of the row, so it reads first. */
-.neighbour__score {
-  display: inline-block;
-  min-width: 2rem;
-  font-family: var(--mono);
-  font-size: 0.625rem;
-  color: var(--marker);
-}
-
-.neighbour__text {
-  font-family: var(--serif);
-  font-size: 0.8125rem;
-  line-height: 1.45;
-  color: var(--ink);
-}
-
-.neighbour__where {
-  display: block;
-  margin-left: 2rem;
-  font-family: var(--mono);
-  font-size: 0.5625rem;
-  color: var(--ink-faint);
-}
-
-/* ---------------------------------------------------------------- graph -- */
-
-.graph { flex: 1; width: 100%; height: 100%; }
-
-.graph__edge {
-  stroke: var(--ink-faint);
-  stroke-opacity: calc(0.15 + var(--w) * 0.5);
-  stroke-width: calc(1px + var(--w) * 3px);
-}
-
-.graph__node { cursor: pointer; }
-.graph__dot { stroke: var(--paper); stroke-width: 2; fill-opacity: 0.85; }
-.graph__node:hover .graph__dot, .graph__node:focus-visible .graph__dot { fill-opacity: 1; stroke: var(--marker); }
-
-.graph__dot--amber { fill: var(--dot-amber); }
-.graph__dot--teal { fill: var(--dot-teal); }
-.graph__dot--rose { fill: var(--dot-rose); }
-.graph__dot--violet { fill: var(--dot-violet); }
-.graph__dot--sage { fill: var(--dot-sage); }
-
-.graph__label {
-  font-family: var(--mono);
-  font-size: 10px;
-  fill: var(--ink-soft);
-  pointer-events: none;
-}
-
-/* -------------------------------------------------------------- signals -- */
 
 .sat { width: 100%; max-width: 46rem; height: auto; }
 .sat__axis { stroke: var(--rule); stroke-width: 1; }
@@ -1796,11 +1547,6 @@ mark.hl--noted::after {
   font-family: var(--mono);
   font-size: 9px;
   fill: var(--ink-faint);
-}
-
-@media (max-width: 60rem) {
-  .stage__body { flex-direction: column; }
-  .stage__side { flex: 0 0 auto; max-height: 45%; border-left: 0; border-top: 1px solid var(--rule); }
 }
 
 /* ============================================================== tag field ==

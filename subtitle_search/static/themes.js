@@ -2,16 +2,14 @@
  *
  * Views over the same quotes, because the work has more than one shape:
  *
- *   Canvas - the themes on a plane. Generative, and the one with no right-hand
- *            edge: columns stop working at the width of the screen, and a plane
- *            does not, so the number of themes is no longer a layout problem.
- *            Where two areas sit relative to each other is itself a claim.
- *   Board  - the same themes as columns. Still the fastest way to sort a pile
- *            when there are few enough themes to see all of them at once.
- *   Matrix - tags against recordings. Analytical: separates a theme many people
- *            raised from one person's preoccupation, which a flat tag list hides.
- *   Pairs  - tags that share quotes. Diagnostic: finds two codes that are really
- *            one code, and codes that always arrive together.
+ *   Canvas  - the themes on a plane. Generative, and the one with no right-hand
+ *             edge: columns stop working at the width of the screen, and a plane
+ *             does not, so the number of themes is no longer a layout problem.
+ *             Where two areas sit relative to each other is itself a claim.
+ *   Board   - the same themes as columns. Still the fastest way to sort a pile
+ *             when there are few enough themes to see all of them at once.
+ *   Signals - whether new interviews are still turning up new tags, and which
+ *             quotes refuse to group with anything. Nothing here files anything.
  *
  * Canvas and board are two shapes of one thing, not two groupings: a theme made
  * on either shows up on the other, because membership lives in a single file and
@@ -27,13 +25,7 @@ import { $, api, escapeHtml, formatTime } from "./util.js";
 import { applyRate, storedRate } from "./player.js";
 import { applyStoredTheme, bindThemeToggle, notify } from "./chrome.js";
 import { initCanvas, renderCanvas, showCanvas } from "./canvas.js";
-import {
-  initSemantics,
-  invalidateSemantics,
-  renderGraph,
-  renderMap,
-  renderSignals,
-} from "./semantics.js";
+import { initSemantics, renderSignals } from "./signals.js";
 
 const el = {
   meta: $("meta"),
@@ -45,16 +37,7 @@ const el = {
   boardFilter: $("board-filter"),
   boardProgress: $("board-progress"),
   addTheme: $("add-theme"),
-  mapView: $("view-map"),
-  graphView: $("view-graph"),
   signalsView: $("view-signals"),
-  matrixView: $("view-matrix"),
-  matrix: $("matrix"),
-  matrixNote: $("matrix-note"),
-  matrixDetail: $("matrix-detail"),
-  pairsView: $("view-pairs"),
-  pairs: $("pairs"),
-  pairsNote: $("pairs-note"),
   queue: $("queue"),
   queueMedia: $("queue-media"),
   queuePlay: $("queue-play"),
@@ -70,7 +53,6 @@ const state = {
   byRef: new Map(),
   recordings: new Map(),
   tags: [],
-  cooccurrence: [],
   themes: [],
   cards: [],
   //: Quotes that are in a theme -- what the board calls sorted.
@@ -97,7 +79,6 @@ async function load() {
   state.byRef = new Map(state.quotes.map((q) => [q.ref, q]));
   state.recordings = new Map(library.recordings.map((r) => [r.id, r]));
   state.tags = library.tags;
-  state.cooccurrence = library.cooccurrence;
   state.metrics = themes.metrics;
   adopt(themes);
 
@@ -108,22 +89,16 @@ async function load() {
     library.untagged_count ? `${library.untagged_count} untagged` : null,
   ].filter(Boolean).join("  ·  ");
 
-  const wanted = new URLSearchParams(location.search).get("tag");
-  if (wanted) {
-    showMode("matrix");
-    renderMatrix(wanted);
-  } else {
-    renderAll();
-  }
+  // A tag from the library's tag rail opens the canvas with that tag filtered,
+  // which answers "where did this tag end up" rather than only "what carries it".
+  renderAll(new URLSearchParams(location.search).get("tag"));
 }
 
-function renderAll() {
+function renderAll(tag = null) {
   renderBoard();
   // showCanvas rather than renderCanvas: the canvas is the mode the page opens
   // in, so nothing clicks into it, and framing the work needs doing on the way.
-  showCanvas();
-  renderMatrix();
-  renderPairs();
+  showCanvas(tag ? { tag } : undefined);
 }
 
 /**
@@ -140,7 +115,6 @@ function adopt(payload) {
   recount();
   renderBoard();
   renderCanvas();
-  if (state.mode === "map") renderMap();
 }
 
 /** Re-derive the two "is this quote dealt with" sets from the cards. */
@@ -155,20 +129,14 @@ function showMode(mode) {
   state.mode = mode;
   el.canvas.hidden = mode !== "canvas";
   el.board.hidden = mode !== "board";
-  el.matrixView.hidden = mode !== "matrix";
-  el.pairsView.hidden = mode !== "pairs";
-  el.mapView.hidden = mode !== "map";
-  el.graphView.hidden = mode !== "graph";
   el.signalsView.hidden = mode !== "signals";
   for (const button of el.modes.querySelectorAll("[data-mode]")) {
     button.setAttribute("aria-pressed", String(button.dataset.mode === mode));
   }
 
-  // These three cost real work -- encoding, a layout simulation -- so they run
+  // Both cost real work -- framing the plane, encoding the corpus -- so they run
   // when asked for rather than on load, and only need measuring once visible.
   if (mode === "canvas") showCanvas();
-  if (mode === "map") renderMap();
-  if (mode === "graph") renderGraph();
   if (mode === "signals") renderSignals();
 }
 
@@ -449,131 +417,6 @@ el.boardColumns.addEventListener("change", async (event) => {
   } catch (error) {
     notify(el.notices, `Could not rename that theme: ${error.message}`, { kind: "warn" });
   }
-});
-
-/* ----------------------------------------------------------- the matrix -- */
-
-function renderMatrix(focusTag = null) {
-  const recordings = [...state.recordings.values()];
-  if (!state.tags.length) {
-    el.matrix.innerHTML = "";
-    el.matrixNote.textContent = "";
-    el.matrixDetail.innerHTML =
-      '<p class="empty">No tags yet. Tag some quotes in the reader and they will show up here.</p>';
-    return;
-  }
-
-  el.matrixNote.textContent =
-    "sorted by how many recordings share the tag — the top rows are the findings";
-
-  const head = `<thead><tr><th class="matrix__corner">tag</th>${recordings
-    .map((r) => `<th class="matrix__rec"><span>${escapeHtml(r.title)}</span></th>`)
-    .join("")}<th class="matrix__total">total</th></tr></thead>`;
-
-  const rows = state.tags
-    .map((entry) => {
-      const cells = recordings
-        .map((recording) => {
-          const count = entry.recordings[recording.id] || 0;
-          // Weight is what turns a table of numbers into a shape you can read
-          // down a column: a sparse row is one person, a solid row is a finding.
-          const weight = count ? Math.min(1, 0.25 + count / 6) : 0;
-          return `<td class="matrix__cell${count ? " matrix__cell--on" : ""}"
-                      data-tag="${escapeHtml(entry.tag)}" data-recording="${recording.id}"
-                      style="--weight:${weight.toFixed(2)}">${count || ""}</td>`;
-        })
-        .join("");
-      return `<tr${focusTag === entry.tag ? ' class="matrix__row--focus"' : ""}>
-        <th class="matrix__tag" data-tag="${escapeHtml(entry.tag)}">
-          <span class="dot dot--${entry.color || "amber"}"></span>${escapeHtml(entry.tag)}
-          <span class="matrix__spread">${entry.recording_count}/${recordings.length}</span>
-        </th>${cells}
-        <td class="matrix__total">${entry.quote_count}</td></tr>`;
-    })
-    .join("");
-
-  el.matrix.innerHTML = head + `<tbody>${rows}</tbody>`;
-  if (focusTag) showMatrixDetail(focusTag, null);
-}
-
-function showMatrixDetail(tag, recordingId) {
-  const quotes = state.quotes.filter(
-    (quote) =>
-      (quote.tags || []).includes(tag) && (!recordingId || quote.recording_id === recordingId)
-  );
-  const where = recordingId ? state.recordings.get(recordingId)?.title : "every recording";
-  el.matrixDetail.innerHTML = `
-    <header class="sheet__head">
-      <h2 class="sheet__title">${escapeHtml(tag)} · ${escapeHtml(where || "")}</h2>
-      <span class="sheet__count">${quotes.length}</span>
-      <button class="btn" id="play-tag" type="button">Play all ${quotes.length}</button>
-    </header>
-    <div class="qgrid">${quotes.map((q) => quoteCard(q, { draggable: false })).join("")}</div>`;
-
-  $("play-tag")?.addEventListener("click", () => {
-    if (quotes.length) startQueue(quotes, `${tag} · ${where}`);
-  });
-}
-
-el.matrix.addEventListener("click", (event) => {
-  const cell = event.target.closest("[data-tag]");
-  if (!cell) return;
-  showMatrixDetail(cell.dataset.tag, cell.dataset.recording || null);
-});
-
-el.matrixDetail.addEventListener("click", (event) => {
-  const card = event.target.closest(".qcard");
-  if (card && event.target.closest('[data-act="play"]')) {
-    const quote = state.byRef.get(card.dataset.ref);
-    if (quote) startQueue([quote], quote.text.slice(0, 40));
-  }
-});
-
-/* ------------------------------------------------------------ the pairs -- */
-
-function renderPairs() {
-  if (!state.cooccurrence.length) {
-    el.pairs.innerHTML =
-      '<p class="empty">No two tags share a quote yet. This view fills in once quotes carry more than one tag.</p>';
-    el.pairsNote.textContent = "";
-    return;
-  }
-
-  el.pairsNote.textContent = "two codes that always arrive together are often one code";
-  const strongest = state.cooccurrence[0].count;
-
-  el.pairs.innerHTML = state.cooccurrence
-    .map((pair) => {
-      const share = Math.max(0.08, pair.count / strongest);
-      return `
-        <button class="pair" type="button" data-a="${escapeHtml(pair.a)}" data-b="${escapeHtml(pair.b)}">
-          <span class="pair__names">
-            <span class="tag">${escapeHtml(pair.a)}</span>
-            <span class="pair__link" style="--share:${share.toFixed(2)}"></span>
-            <span class="tag">${escapeHtml(pair.b)}</span>
-          </span>
-          <span class="pair__counts">${pair.count} quote${pair.count === 1 ? "" : "s"}
-            · ${pair.recording_count} recording${pair.recording_count === 1 ? "" : "s"}</span>
-        </button>
-        <div class="pair__quotes" hidden></div>`;
-    })
-    .join("");
-}
-
-el.pairs.addEventListener("click", (event) => {
-  const button = event.target.closest(".pair");
-  if (!button) return;
-  const panel = button.nextElementSibling;
-  if (!panel.hidden) {
-    panel.hidden = true;
-    return;
-  }
-  const { a, b } = button.dataset;
-  const quotes = state.quotes.filter(
-    (quote) => (quote.tags || []).includes(a) && (quote.tags || []).includes(b)
-  );
-  panel.innerHTML = `<div class="qgrid">${quotes.map((q) => quoteCard(q, { draggable: false })).join("")}</div>`;
-  panel.hidden = false;
 });
 
 /* --------------------------------------------------- listening in a row -- */

@@ -1627,8 +1627,21 @@ export function initCanvas(context) {
  * where the user left it, and moving it out from under them would be worse than
  * a bad first frame.
  */
-export function showCanvas() {
+export function showCanvas({ tag = null } = {}) {
   renderCanvas();
+  // A tag arriving from the library's tag rail. The filter is the honest answer
+  // to "show me this tag": it rings the matching cards and quiets the rest, so
+  // you see where those quotes already ended up rather than a list of them
+  // pulled out of the arrangement that is the analysis.
+  if (tag) {
+    el.filterTag.value = `tag:${tag}`;
+    // Options exist by now -- renderCanvas -> renderTray -> renderFilters --
+    // but a tag nobody has used would leave the select on its placeholder.
+    if (el.filterTag.value === `tag:${tag}`) {
+      renderTray();
+      markMatches();
+    }
+  }
   if (!framed) {
     fit();
     framed = true;
