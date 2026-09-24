@@ -19,11 +19,14 @@ import {
   chunkIndexAtTime,
   expandChunks,
   highlightSlices,
+  offsetWithin,
 } from "../lib/transcript.js";
 import { storedRate, applyRate } from "../lib/player.js";
+import { remapJoinedCues, remapSplitCues, wordStartAt } from "../lib/editing.js";
 import { useToast } from "../ui/Toast.jsx";
 import { ThemeToggle } from "../ui/Theme.jsx";
 import Transcript from "./Transcript.jsx";
+import EditBlock from "./EditBlock.jsx";
 import Dock from "./Dock.jsx";
 import Sidebar from "./Sidebar.jsx";
 import QuoteBar from "./QuoteBar.jsx";
@@ -50,6 +53,7 @@ export default function ReaderPage() {
   const [searchMode, setSearchMode] = useState("fuzzy");
   const [searchResults, setSearchResults] = useState(null);
   const [failed, setFailed] = useState(null);
+  const [editing, setEditing] = useState(null); // chunk index, or null
 
   const readerRef = useRef(null);
   const chunksRef = useRef(null);
@@ -593,12 +597,244 @@ export default function ReaderPage() {
     }
   }, [align.running, recording, recordingId, notify, takeRecording]);
 
+  /* -------------------------------------------------------------- editing -- */
+
+  /** Take quotes the server re-anchored after an edit. */
+  const takeHighlights = useCallback((updated) => {
+    if (!updated?.length) return;
+    setHighlights((all) =>
+      all.map((h) => updated.find((u) => u.id === h.id) || h)
+    );
+  }, []);
+
+  const commitText = useCallback(
+    async (cueId, raw, field) => {
+      const cue = cueById.get(cueId);
+      if (!cue) return;
+      const text = raw.replace(/\s+/g, " ").trim();
+      if (!text || text === cue.text) {
+        field.textContent = cue.text;
+        return;
+      }
+      const row = field.closest(".cue-line");
+      row?.classList.add("cue-line--saving");
+      try {
+        const result = await api(`/api/recordings/${recordingId}/cues/${cueId}`, {
+          method: "PATCH",
+          body: { text },
+        });
+        field.textContent = result.cue.text;
+        // The cue objects are the server's, so take the whole recording rather
+        // than patching one string and hoping the rest still agrees.
+        setRecording((current) => {
+          if (!current) return current;
+          const cues = current.transcript.cues.map((c) =>
+            c.id === result.cue.id ? result.cue : c
+          );
+          return { ...current, transcript: { ...current.transcript, cues } };
+        });
+        takeHighlights(result.highlights);
+        if (result.backup_created) {
+          notify(`Original transcript saved as ${result.backup_created}.`);
+        }
+        row?.classList.remove("cue-line--saving");
+        row?.classList.add("cue-line--saved");
+        setTimeout(() => row?.classList.remove("cue-line--saved"), 1200);
+      } catch (error) {
+        row?.classList.remove("cue-line--saving");
+        row?.classList.add("cue-line--failed");
+        field.textContent = cue.text;
+        notify(`Could not save that line: ${error.message}`, { kind: "warn" });
+      }
+    },
+    [cueById, recordingId, notify, takeHighlights]
+  );
+
+  /**
+   * Put a run of captions back together.
+   *
+   * Undoing a cut and repairing Zoom's opposite failure -- one sentence chopped
+   * across three captions -- are the same operation, so they are the same
+   * request. `expect` is the captions as the caller believes them to read: cue
+   * ids are positional and an undo can be pressed after something else has
+   * moved them, so the server compares before joining and refuses if the
+   * transcript has shifted.
+   */
+  const joinCaptions = useCallback(
+    async (cueId, through, expect, { keepEditing = false } = {}) => {
+      try {
+        const result = await api(`/api/recordings/${recordingId}/cues/${cueId}/merge`, {
+          method: "POST",
+          body: { through, expect },
+        });
+        if (result.backup_created) {
+          notify(`Original transcript saved as ${result.backup_created}.`);
+        }
+        // One caption carries one speaker, so a join across two of them drops a
+        // name. Worth saying out loud rather than discovering later.
+        if (result.absorbed_speakers?.length) {
+          notify(
+            `Joined ${result.joined} captions under ${result.speaker} — ${result.absorbed_speakers.join(", ")} no longer named on those words.`,
+            { kind: "warn" }
+          );
+        } else {
+          notify(`Joined ${result.joined} captions into one.`);
+        }
+        setSplitCues((current) => remapJoinedCues(current, result.cue_id, result.joined));
+        takeRecording(result.recording);
+        if (!keepEditing) setEditing(null);
+        return result;
+      } catch (error) {
+        notify(`Could not join those captions: ${error.message}`, { kind: "warn" });
+        return null;
+      }
+    },
+    [recordingId, notify, takeRecording]
+  );
+
+  /**
+   * Cut a caption in two, and say which kind of cut it was.
+   *
+   * Zoom routinely puts the end of one person's turn and the start of another's
+   * in a single caption, and no amount of reattributing whole captions can
+   * separate them. So the caption itself has to divide first, and then each half
+   * can be given its own speaker.
+   */
+  const requestSplit = useCallback(
+    async (cueId, offset, text) => {
+      if (!text.slice(0, offset).trim() || !text.slice(offset).trim()) {
+        notify("A split needs words on both sides of the cut.");
+        return null;
+      }
+      const done = working("Measuring where to cut…");
+      try {
+        const result = await api(`/api/recordings/${recordingId}/cues/${cueId}/split`, {
+          method: "POST",
+          body: { offset, text },
+        });
+        if (result.backup_created) {
+          notify(`Original transcript saved as ${result.backup_created}.`);
+        }
+        // Say which it was. A measured cut lands in the real pause between the
+        // two speakers; an estimated one is the old interpolation. The moment
+        // after a cut is when you know you did not mean it, so the undo goes in
+        // the toast, carrying the two halves as written so it can only put back
+        // these same words. Timestamps read to the second, so a pause shorter
+        // than that would print as a range from a time to itself.
+        const from = formatTime(result.at);
+        const to = formatTime(result.tail_at);
+        notify(
+          result.measured
+            ? from === to
+              ? `Cut on the measured pause at ${from}.`
+              : `Cut on the measured pause, ${from} to ${to}.`
+            : `Cut at an estimated ${from} — measure timings for an exact one.`,
+          {
+            action: {
+              label: "Undo",
+              onAct: () => joinCaptions(result.cue_ids[0], result.cue_ids[1], result.halves),
+            },
+          }
+        );
+        takeHighlights(result.highlights);
+        // Cue ids are positional, so the manual expansions move with them.
+        setSplitCues((current) => remapSplitCues(current, result.cue_ids));
+        takeRecording(result.recording);
+        return result;
+      } catch (error) {
+        notify(`Could not split that caption: ${error.message}`, { kind: "warn" });
+        return null;
+      } finally {
+        done();
+      }
+    },
+    [recordingId, notify, working, joinCaptions, takeHighlights, takeRecording]
+  );
+
+  const reattribute = useCallback(
+    async (cueId, speaker) => {
+      const cue = cueById.get(cueId);
+      if (!cue || !speaker || speaker === (cue.speaker || "")) return;
+      try {
+        const result = await api(`/api/recordings/${recordingId}/cues/${cueId}/speaker`, {
+          method: "PATCH",
+          body: { speaker },
+        });
+        if (result.backup_created) {
+          notify(`Original transcript saved as ${result.backup_created}.`);
+        }
+        // Reattributing regroups the whole transcript, so the reader takes it
+        // back wholesale rather than trying to patch blocks in place.
+        takeRecording(result.recording);
+      } catch (error) {
+        notify(`Could not reassign that line: ${error.message}`, { kind: "warn" });
+      }
+    },
+    [cueById, recordingId, notify, takeRecording]
+  );
+
+  /**
+   * Cut a caption in two where two people share it, by double-clicking the word
+   * the second one starts on.
+   *
+   * Zoom's worst habit is putting the end of one turn and the start of the next
+   * inside a single caption, and no amount of reattributing captions separates
+   * those -- they are one caption. So this is the gesture that divides it.
+   */
+  const onDoubleClickWord = useCallback(
+    (event) => {
+      // While correcting text, a double-click means what it always means:
+      // select a word. Edit mode has its own split, on the caret.
+      if (editing != null) return;
+      const cueEl = event.target.closest(".cue");
+      if (!cueEl) return;
+
+      // The double-click has already selected the word; its start is where the
+      // browser thinks the word begins, which is the point being asked for.
+      const selection = window.getSelection();
+      let node = null;
+      let offset = 0;
+      if (selection?.rangeCount) {
+        const range = selection.getRangeAt(0);
+        if (cueEl === range.startContainer || cueEl.contains(range.startContainer)) {
+          node = range.startContainer;
+          offset = range.startOffset;
+        }
+      }
+      // Fallback for a double-click that selected nothing -- on punctuation,
+      // say. The standard call first, then WebKit's older one.
+      if (!node && document.caretPositionFromPoint) {
+        const position = document.caretPositionFromPoint(event.clientX, event.clientY);
+        if (position && cueEl.contains(position.offsetNode)) {
+          node = position.offsetNode;
+          offset = position.offset;
+        }
+      }
+      if (!node && document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+        if (range && cueEl.contains(range.startContainer)) {
+          node = range.startContainer;
+          offset = range.startOffset;
+        }
+      }
+      if (!node) return;
+
+      const cue = cueById.get(cueEl.dataset.cueId);
+      if (!cue) return;
+      const within = offsetWithin(cueEl, node, offset);
+      event.preventDefault();
+      selection?.removeAllRanges();
+      requestSplit(cue.id, wordStartAt(cue.text, within), cue.text);
+    },
+    [editing, cueById, requestSplit]
+  );
+
   /* ------------------------------------------------------------- keyboard -- */
 
   // Registered once, with every moving value read through a ref. A listener that
   // closed over state would move the cursor from where it was ten keys ago.
   const actions = useRef({});
-  actions.current = { player, cursor, saveQuote, copySelection, assignSpeaker, selection, roster, setTab, setSplitCues, chunks, setActiveHighlightId };
+  actions.current = { player, cursor, saveQuote, copySelection, assignSpeaker, selection, roster, setTab, setSplitCues, chunks, setActiveHighlightId, setEditing };
 
   useEffect(() => {
     const TYPING = new Set(["INPUT", "TEXTAREA", "SELECT"]);
@@ -668,6 +904,10 @@ export default function ReaderPage() {
           });
           break;
         }
+        case "e":
+          event.preventDefault();
+          a.setEditing(cursorIndex.current);
+          break;
         case "Escape":
           a.selection.clear();
           a.setActiveHighlightId(null);
@@ -800,8 +1040,34 @@ export default function ReaderPage() {
                   setActiveHighlightId(id);
                   setTab("highlights");
                 }}
-                editingIndex={-1}
-                renderEditor={() => null}
+                onDoubleClickWord={onDoubleClickWord}
+                editingIndex={editing}
+                renderEditor={(chunk) => (
+                  <EditBlock
+                    chunk={chunk}
+                    cueById={cueById}
+                    speakers={speakers}
+                    onCommitText={commitText}
+                    onReattribute={reattribute}
+                    onSplitAtCaret={(cueId, offset, text) => requestSplit(cueId, offset, text)}
+                    onJoinWithPrevious={async (cueId, position, text) => {
+                      if (position <= 0) {
+                        notify("Nothing above this line in the block to join it to.");
+                        return;
+                      }
+                      const above = chunk.cue_ids[position - 1];
+                      const previous = cueById.get(above);
+                      // A join works on the captions as the file has them, so
+                      // any typing in this line is saved first.
+                      await joinCaptions(above, cueId, [previous?.text ?? "", text], {
+                        keepEditing: true,
+                      });
+                    }}
+                    onPlayLine={(cue) => player.seekAndPlay(cue.start, { play: true })}
+                    onCueLine={(cue) => player.cue(cue.start)}
+                    onDone={() => setEditing(null)}
+                  />
+                )}
               />
             )}
           </div>
