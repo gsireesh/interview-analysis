@@ -1,0 +1,933 @@
+/* ============================================================ quote cards ==*/
+
+.qgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+  gap: 0.625rem;
+  margin-top: 0.875rem;
+}
+
+.qcard {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule);
+  border-radius: var(--r-md);
+  padding: 0.625rem 0.75rem;
+}
+
+.qcard--amber { border-left-color: var(--dot-amber); }
+.qcard--teal { border-left-color: var(--dot-teal); }
+.qcard--rose { border-left-color: var(--dot-rose); }
+.qcard--violet { border-left-color: var(--dot-violet); }
+.qcard--sage { border-left-color: var(--dot-sage); }
+
+.qcard[draggable="true"] { cursor: grab; }
+.qcard--dragging { opacity: 0.4; }
+
+.qcard__text {
+  font-family: var(--serif);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  margin: 0 0 0.5rem;
+}
+
+.qcard__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+}
+
+.qcard__where {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qcard__meta time { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.qcard__tools { margin-left: auto; display: flex; gap: 0.2rem; }
+.qcard__tools .icon-btn { text-decoration: none; }
+
+.qcard__note {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  border-left: 2px solid var(--rule);
+  padding-left: 0.5rem;
+}
+
+.qcard .tags { margin-top: 0.5rem; }
+
+/* ================================================================== board ==*/
+
+.board { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-h)); }
+
+.board__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 0.625rem 1.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.board__filter { display: flex; align-items: center; gap: 0.4rem; font-size: 0.6875rem; color: var(--ink-faint); }
+
+.board__filter select {
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0.2rem 0.35rem;
+}
+
+.board__hint { margin-left: auto; font-family: var(--mono); font-size: 0.625rem; color: var(--ink-faint); }
+
+.board__columns {
+  flex: 1;
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem 2rem;
+  overflow-x: auto;
+  align-items: flex-start;
+}
+
+.column {
+  flex: 0 0 21rem;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-sunk);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  padding: 0.625rem;
+}
+
+.column--unsorted { background: transparent; border-style: dashed; }
+
+.column__head { display: flex; align-items: center; gap: 0.5rem; }
+
+.column__title,
+.column__title-input {
+  flex: 1;
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  padding: 0.15rem 0.25rem;
+  font-family: var(--sans);
+  min-width: 0;
+}
+
+.column__title-input:focus { border-color: var(--marker); background: var(--paper); outline: none; }
+
+.column__count {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+}
+
+.column__spread {
+  margin: 0.25rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+
+.column__note {
+  width: 100%;
+  margin: 0.375rem 0;
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0.3rem 0.4rem;
+  resize: vertical;
+}
+
+.column__body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 5rem;
+  border-radius: var(--r-sm);
+  padding: 0.25rem;
+}
+
+.column__body--over { background: var(--marker-wash); outline: 1px dashed var(--marker); }
+
+/* ================================================================== queue ==*/
+
+/* Listening to a theme end to end. Tone is half of what a quote means and it
+   does not survive being written down, so the whole point of keeping the
+   recordings is being able to hear a theme rather than only read it. */
+.queue {
+  position: fixed;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  width: min(52rem, calc(100vw - 2rem));
+  padding: 0.625rem 0.875rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+}
+
+.queue__body { flex: 1; min-width: 0; }
+
+.queue__label {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue__quote {
+  margin: 0.15rem 0 0;
+  font-family: var(--serif);
+  font-size: 0.875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 60rem) {
+  .board__columns { padding: 1rem 0.75rem 2rem; }
+  .column { flex-basis: 17rem; }
+  .sheet { padding: 1.5rem 0.75rem 5rem; }
+}
+
+/* Keyboard path onto the board, since dragging cannot be the only way in. */
+.qcard__move {
+  width: 100%;
+  margin-top: 0.5rem;
+  font: inherit;
+  font-size: 0.625rem;
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0.15rem 0.25rem;
+}
+
+.qcard__move:focus { border-color: var(--marker); outline: none; }
+
+/* ============================================================== signals ==
+ *
+ * Whether the study is still finding new tags, and what refuses to group. It
+ * gets the same quiet palette as everything else, because a chart in research
+ * colours would read as a result rather than as a proposal to argue with.
+ */
+
+.side__note { margin: 0 0 0.625rem; font-size: 0.6875rem; color: var(--ink-soft); line-height: 1.55; }
+
+.sat { width: 100%; max-width: 46rem; height: auto; }
+.sat__axis { stroke: var(--rule); stroke-width: 1; }
+/* Tuned up from 0.18: against warm paper that read as a bar, against white
+   it read as nothing. */
+.sat__bar { fill: var(--marker); fill-opacity: 0.28; }
+.sat__line { fill: none; stroke: var(--marker); stroke-width: 2; }
+.sat__dot { fill: var(--marker); }
+
+.sat__label {
+  font-family: var(--mono);
+  font-size: 9px;
+  fill: var(--ink-faint);
+}
+
+
+/* ----------------------------------------------------------- the canvas -- */
+
+/* Themes on a plane rather than in columns.
+ *
+ * The look to hold onto is a desk, not a diagram. Areas are regions drawn on the
+ * surface -- dashed, barely tinted, clearly a boundary someone drew rather than a
+ * container the software provided. Cards are paper: raised a hair off the
+ * surface, with the same coloured spine they carry everywhere else in the tool,
+ * and they tilt when you pick one up. That tilt is the only decoration here and
+ * it earns its place: it is the difference between dragging an object and
+ * watching a rectangle update.
+ *
+ * Everything sizes off --card-w / --card-h, which canvas.js sets from the numbers
+ * the server laid the file out with. The stylesheet must not restate them: a card
+ * one pixel wider here than there would put every drop in the wrong grid slot.
+ */
+
+.canvas { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-h)); }
+
+.canvas__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem var(--pad-x);
+  border-bottom: 1px solid var(--rule);
+  flex: none;
+}
+
+.canvas__body { flex: 1; display: flex; min-height: 0; }
+
+.canvas__viewport {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  background-color: var(--paper-sunk);
+  /* A dot grid, positioned by canvas.js from the pan so it reads as one endless
+     surface instead of a texture sliding under the work. */
+  background-image: radial-gradient(circle at 1px 1px, var(--ink-faint) 0.7px, transparent 0);
+  cursor: grab;
+  /* Pointer events do the dragging; the browser must not also decide to scroll. */
+  touch-action: none;
+}
+
+.canvas__viewport:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.canvas__viewport--panning { cursor: grabbing; }
+
+.canvas__surface {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.zoomer { display: inline-flex; align-items: center; gap: 0.25rem; }
+
+.zoomer__level {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+  min-width: 3rem;
+  text-align: center;
+}
+
+/* -- an area: a boundary someone drew on the surface -- */
+
+/* Lifted off the surface rather than tinted a colour, so the boundary reads the
+   same in both themes: paper-raised over paper-sunk is lighter than its ground
+   in light and in dark, where a fixed tint would vanish into one of them. */
+.area {
+  position: absolute;
+  border: 1px dashed color-mix(in srgb, var(--rule) 60%, var(--ink-faint));
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--paper-raised) 55%, transparent);
+  overflow: hidden;
+  z-index: 1;
+}
+
+.area--moving { z-index: 3; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14); }
+
+/* Where the card in your hand would land. The one place the loud colour is
+   spent on this page, because a drop you cannot predict is a drop you undo. */
+.area--target {
+  border-color: var(--marker);
+  border-style: solid;
+  background: var(--marker-wash);
+}
+
+/* The title bar, which does not scale.
+ *
+ * Every length inside it is divided by --z, the canvas zoom, so it comes out the
+ * same size on screen at any zoom. A quote shrinking as you pull back is fine --
+ * you are not reading it from there. A theme's *name* is what you navigate by,
+ * and a plane whose labels go illegible exactly when you zoom out to see all of
+ * them has given up the thing it was for.
+ *
+ * Two consequences, both deliberate. It sits above the cards, so a theme's name
+ * can never be hidden behind a quote. And below about 75% zoom it grows past the
+ * room reserved for it and covers the top of the first row -- which is why it
+ * has an opaque ground: it then reads as a title bar laid over the cards, which
+ * is exactly what it is, rather than as a collision.
+ */
+.area__chrome {
+  position: relative;
+  z-index: 3;
+  /* Laid out at z times the area's width and then scaled by 1/z, which cancels
+     the surface's own scale: the bar spans the area on screen while every length
+     inside it is measured in unzoomed pixels. Both factors come from JS rather
+     than from a calc, so nothing here depends on dividing by a custom property. */
+  width: calc(100% * var(--z, 1));
+  transform: scale(var(--inv-z, 1));
+  transform-origin: 0 0;
+  background: color-mix(in srgb, var(--paper-raised) 62%, var(--paper-sunk));
+  border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  /* Zoomed out, or with a name long enough to wrap, the bar is taller than the
+     room reserved for it and lies over the first row of cards. The shadow says
+     so: a label floating above the contents, which is what it is, rather than
+     cards that have been cut off. */
+  box-shadow: 0 3px 6px -3px rgba(0, 0, 0, 0.18);
+  cursor: grab;
+}
+
+/* Nothing to float above. */
+.area--collapsed .area__chrome, .area:not(:has(.ccard)) .area__chrome { box-shadow: none; }
+
+.area--moving .area__chrome { cursor: grabbing; }
+
+/* Somewhere to pick a theme up.
+ *
+ * The bar it sits on turned out to be almost entirely controls: the title is a
+ * field, the note is a field, the rest are buttons, and every one of those keeps
+ * its own job on a press. That left the few pixels of padding between them as
+ * the only place an area could be grabbed, which is not a handle, it is a
+ * knack. This strip runs the full width of the bar and is never anything else,
+ * so there is always somewhere obvious to take hold of.
+ *
+ * It does not scale, like the rest of the bar, so it is the same easy target at
+ * any zoom -- which is when you most want it, since zooming out is how you find
+ * the area you meant to move somewhere else. */
+.area__grab {
+  display: block;
+  height: 14px;
+  cursor: grab;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+}
+
+/* The cue is a small pill in the middle; the target is the whole strip. */
+.area__grab::after {
+  content: "";
+  display: block;
+  width: 26px;
+  height: 3px;
+  margin: 5px auto;
+  border-radius: var(--r-sm);
+  background: var(--rule);
+}
+
+.area__grab:hover::after { background: var(--ink-faint); }
+.area--moving .area__grab { cursor: grabbing; }
+.area--moving .area__grab::after { background: var(--marker); }
+
+.area__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  /* The strip above provides the separation the top padding used to, so the bar
+     grows by less than the handle costs. */
+  padding: 2px 10px 2px;
+}
+
+.area__head .icon-btn, .area__count { margin-top: 1px; }
+
+.area__roll { font-size: 9px; width: 14px; text-align: center; }
+
+/* A wrapping field, so a long theme name loses none of itself when there is not
+   the width for one line. Its height is followed by fitTitles(). */
+.area__title {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  padding: 2px 4px;
+  min-width: 0;
+  flex: 1;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  display: block;
+  /* Break a word only when nothing else will fit it, which after fitTitles has
+     shrunk the type to the floor means almost never -- and never silently, since
+     the alternative there is cutting the name off. */
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.area__title:hover { border-color: var(--rule); }
+.area__title:focus { border-color: var(--marker); background: var(--paper-raised); outline: none; }
+
+.area__count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--paper-sunk);
+  border-radius: var(--r-pill);
+  padding: 1px 6px;
+}
+
+/* On the title row, because it is the row that never goes away. */
+.area__tools { display: flex; gap: 1px; flex: none; margin-top: 1px; }
+
+.area__sub {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 10px 5px;
+}
+
+.area__sub .area__spread { margin-left: auto; }
+
+.area__spread { font-family: var(--mono); font-size: 9px; color: var(--ink-faint); flex: none; }
+
+/* Out of room, and this is the order things are given up in.
+   
+   The note and the recording spread go first -- losing that row also pulls the
+   bar back inside the space reserved for it, so it stops covering the first row
+   of cards, and the two problems have one cure. Then the count. The buttons go
+   last and only on a bar too narrow to press one, because a control you can
+   never see is worse than a name that wraps to three lines. */
+.area--tight .area__sub { display: none; }
+/* Every pixel the bar gives back is a pixel of the first card row it stops
+   covering, so tight mode also trims its own padding. */
+.area--tight .area__head { padding: 2px 8px 4px; }
+.area--cramped .area__count { display: none; }
+.area--bare .area__tools { display: none; }
+
+.area__chrome .icon-btn { font-size: 11px; padding: 2px 4px; }
+
+.area__note {
+  font: inherit;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  flex: 1;
+  min-width: 0;
+  padding: 1px 0;
+}
+
+.area__note:hover { border-bottom-color: var(--rule); }
+.area__note:focus { border-bottom-color: var(--marker); outline: none; }
+.area__note::placeholder { color: var(--ink-faint); font-style: normal; }
+
+/* Rolled up: the title bar and nothing else, sized to it rather than to a
+   stored height, so it stays one bar tall at every zoom. What is inside keeps
+   its size and its arrangement, and a quote can still be dropped on it -- the
+   theme is closed, not shut. */
+.area--collapsed {
+  /* fitChrome sets the height: the bar's own, converted out of screen pixels
+     into canvas units. "auto" would measure the bar's layout box, which is a
+     zoom's worth too short. */
+  border-style: solid;
+  background: color-mix(in srgb, var(--paper-raised) 40%, transparent);
+}
+
+.area--collapsed .area__chrome { border-bottom: 0; border-radius: var(--r-sm); }
+
+.area__empty {
+  position: absolute;
+  inset: auto 0 45% 0;
+  margin: 0;
+  text-align: center;
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+
+/* Big enough to hit at any zoom, quiet enough to forget until wanted. */
+.area__grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1.125rem;
+  height: 1.125rem;
+  cursor: nwse-resize;
+  background: linear-gradient(
+    135deg,
+    transparent 0 55%,
+    var(--rule) 55% 65%,
+    transparent 65% 75%,
+    var(--rule) 75% 85%,
+    transparent 85%
+  );
+}
+
+.area:hover .area__grip { background-color: var(--paper-sunk); }
+
+/* -- a card: one appearance of one quote, sitting somewhere -- */
+
+.ccard {
+  position: absolute;
+  width: var(--card-w, 230px);
+  height: var(--card-h, 150px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule);
+  border-radius: var(--r-md);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  cursor: grab;
+  z-index: 2;
+  overflow: hidden;
+}
+
+.ccard:hover { box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12); }
+.ccard:focus-visible, .ccard--focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* The original stays where it was, faded, while the ghost is in your hand -- so
+   you can see what you are about to change your mind about. */
+.ccard--lifted { opacity: 0.2; box-shadow: none; }
+
+.ccard__text {
+  font-family: var(--serif);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  margin: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+
+.ccard__foot {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  flex: none;
+}
+
+.ccard__who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.ccard__foot time { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ccard__foot .icon-btn { text-decoration: none; }
+
+.ccard__tags {
+  margin: 0;
+  font-size: 0.5625rem;
+  font-family: var(--mono);
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* The quote's colour, restated.
+ *
+ * These rules sit after .qcard--* in the file, so the border shorthand on .ccard
+ * and .tray__item would otherwise paint over the spine and lose the one thing
+ * that ties a card here to the same quote in the reader. Two classes, so the
+ * colour wins on specificity rather than on which line happens to come last. */
+.ccard.qcard--amber, .tray__item.qcard--amber { border-left-color: var(--dot-amber); }
+.ccard.qcard--teal, .tray__item.qcard--teal { border-left-color: var(--dot-teal); }
+.ccard.qcard--rose, .tray__item.qcard--rose { border-left-color: var(--dot-rose); }
+.ccard.qcard--violet, .tray__item.qcard--violet { border-left-color: var(--dot-violet); }
+.ccard.qcard--sage, .tray__item.qcard--sage { border-left-color: var(--dot-sage); }
+
+/* The card in your hand. Tilted, because that is what tells you it is lifted
+   rather than merely selected, and it costs nothing to read. */
+.ccard--ghost {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  transform: rotate(-2deg);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  opacity: 0.94;
+}
+
+.ccard--ghost .ccard__text { -webkit-line-clamp: 5; line-clamp: 5; }
+
+/* Over the tray: this drop puts the card away rather than placing it. */
+.ccard--discard {
+  border-color: var(--dot-rose);
+  border-left-color: var(--dot-rose);
+  opacity: 0.6;
+}
+
+/* -- the tray: quotes not out on the plane yet -- */
+
+/* On the left, where the board keeps its unsorted column: the pile you are
+   working from is the same pile in both views, and it should not move house
+   between them. */
+.tray {
+  flex: none;
+  width: 19rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.tray__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--rule);
+  flex: none;
+}
+
+/* Six narrow controls in two columns rather than six full-width rows: the list
+   under them is the point, and a filter bar that eats half the panel is a filter
+   bar you stop using. */
+.tray__filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem 0.375rem;
+}
+
+.tray__filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
+  min-width: 0;
+}
+
+.tray__filter > span {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: lowercase;
+  color: var(--ink-faint);
+  padding-left: 0.125rem;
+}
+
+.tray__filter select { width: 100%; }
+
+.tray__state {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.125rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+}
+
+.btn--bare {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--marker);
+  text-decoration: underline;
+  margin-left: auto;
+}
+
+.btn--bare:hover { color: var(--marker); border: 0; }
+
+.tray__tags {
+  margin: 0.25rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tray__search, .tray__head select {
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  height: 1.75rem;
+  padding: 0 0.375rem;
+  min-width: 0;
+}
+
+.tray__search:focus, .tray__head select:focus { border-color: var(--marker); outline: none; }
+
+.tray__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.tray__item {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule);
+  border-radius: var(--r-md);
+  padding: 0.4375rem 0.5rem;
+  cursor: grab;
+  touch-action: none;
+}
+
+.tray__item:hover { border-color: var(--ink-faint); }
+.tray__item:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* Whole, never clipped.
+ *
+ * A card on the plane is a tile in a layout and has to hold a fixed size; this
+ * list does not. Deciding which theme a quote belongs to means reading the
+ * quote, and a list of quotes cut off at three lines makes you drag each one out
+ * to find out what it says -- which is the decision, done backwards. */
+.tray__text {
+  font-family: var(--serif);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  margin: 0 0 0.25rem;
+}
+
+.tray__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+}
+
+/* The speaker takes what is left, so the time and the way out keep their place
+   down the right-hand edge however long a name is. */
+.tray__who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tray__meta .icon-btn { text-decoration: none; margin: -2px -2px -2px 0; }
+
+.tray__meta time { font-family: var(--mono); }
+
+/* The keyboard's half of the canvas: what is held, and what can be done to it
+   without a pointer. */
+.tray__foot {
+  flex: none;
+  border-top: 1px solid var(--rule);
+  padding: 0.5rem;
+  background: var(--paper-sunk);
+}
+
+.tray__foot .empty { padding: 0.5rem 0; }
+
+.inspector__text {
+  font-family: var(--serif);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  margin: 0 0 0.5rem;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.inspector__row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+}
+
+.inspector__row select {
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  height: 1.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.inspector__hint {
+  margin: 0.375rem 0;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+}
+
+.inspector__acts { display: flex; gap: 0.375rem; }
+.inspector__acts .btn { flex: 1; height: 1.75rem; justify-content: center; }
+
+/* Where else the same quote is pinned. Said on the board because a column
+   cannot show it, and a quote silently in two places is a miscount. */
+.qcard__also {
+  margin: 0.375rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+}
+
+@media (max-width: 60rem) {
+  /* Below this the tray and the plane are fighting over the same screen. The
+     plane wins: the tray becomes a drawer over the left-hand edge. */
+  .tray { position: absolute; left: 0; top: 0; bottom: 0; z-index: 40; width: 16rem; }
+  .canvas__body { position: relative; }
+}
+
+/* Nothing on the plane yet. Lives in the viewport rather than on the surface, so
+   it cannot be panned away from the person who has not worked out how to pan. */
+.canvas__blank {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  transform: translate(-50%, -50%);
+  width: min(28rem, 80%);
+  margin: 0;
+  text-align: center;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--ink-soft);
+  pointer-events: none;
+}
+
+.canvas__blank strong { color: var(--ink); font-weight: 600; }
+
+.canvas__keys {
+  display: inline-block;
+  margin-top: 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+}
+
+/* A filter is a question, not an instruction to hide things.
+ *
+ * So nothing disappears from the plane and nothing moves. The cards that answer
+ * the question are ringed, and the rest are left alone but quieted -- which
+ * tells you the thing the tray cannot: where the quotes you are asking about
+ * have already ended up. Clearing the filters takes it all back. */
+.canvas__surface--filtering .ccard { opacity: 0.55; }
+
+.canvas__surface--filtering .ccard--match {
+  opacity: 1;
+  border-color: var(--marker);
+  box-shadow: 0 0 0 2px var(--marker-wash), 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+
+/* A view that is not on screen keeps its place in the flow rather than being
+   unmounted: the canvas holds a pan, a zoom and a half-narrowed filter, and
+   switching to the board and back should not be a way to lose them. */
+.view-host { display: contents; }
+.view-host[hidden] { display: none !important; }

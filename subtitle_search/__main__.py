@@ -145,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
             factory=True,
             reload=True,
             reload_dirs=[str(Path(__file__).resolve().parent)],
+            # web/ lives in the package but is built, not written. Without this
+            # every `npm run build` restarts the server, and in the two-process
+            # dev loop it is Vite serving the interface anyway.
+            reload_excludes=["*/web/*"],
             host=args.host,
             port=args.port,
             # Louder than usual on purpose: a reload you cannot see happening is

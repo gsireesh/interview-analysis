@@ -41,22 +41,15 @@ export default defineConfig({
       // seek -- which is the interaction the whole tool is built around. A
       // timeout would cut the open connection of a video that is merely paused.
       "/api": { target: backend, changeOrigin: false },
-      // Only while the vanilla pages still exist. Goes with static/.
-      "/static": { target: backend, changeOrigin: false },
     },
   },
   build: {
-    // Not static/: vite build empties its output directory, and static/ still
-    // holds the hand-written app being served. web/ is generated, static/ is
-    // written by hand, and both exist until the migration finishes.
+    // Generated and committed; nothing in here is written by hand.
     outDir: fileURLToPath(new URL("../subtitle_search/web", import.meta.url)),
     emptyOutDir: true,
     assetsDir: "assets",
     rollupOptions: {
-      // Entries are added as each page is ported; until then the server keeps
-      // serving the hand-written page from static/, so web/ never holds a
-      // half-built one.
-      input: { library: page("library"), reader: page("reader") },
+      input: { library: page("library"), reader: page("reader"), themes: page("themes") },
     },
   },
 });

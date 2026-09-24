@@ -387,12 +387,29 @@ def overlapping(cards):
     )
 
 
-def test_the_canvas_page_offers_both_shapes(client):
+def test_the_canvas_and_the_board_are_two_shapes_of_one_grouping(client):
+    """A theme made on either has to show up on the other.
+
+    This used to check that the themes page shipped markup for both views, back
+    when the server sent the whole interface. It is rendered in the browser now,
+    so the thing worth holding is the contract underneath: one request answers
+    with the themes *and* the cards laid out on the plane, which is what makes
+    the two views the same grouping rather than two of them.
+    """
     api, _ = client
-    page = api.get("/themes").text
-    assert 'id="view-canvas"' in page
-    assert 'id="view-board"' in page
-    assert 'data-mode="canvas"' in page
+    body = api.get("/api/library/themes").json()
+    assert set(body) >= {"themes", "cards", "placed", "on_canvas", "metrics"}
+
+    ref = refs_of(api)[0]
+    api.post("/api/library/canvas/place", json={"ref": ref, "theme_id": None, "x": 10, "y": 10})
+    theme = api.post("/api/library/themes", json={"title": "Trust"}).json()["theme"]
+    after = api.post(
+        "/api/library/canvas/place", json={"ref": ref, "theme_id": theme["id"]}
+    ).json()
+
+    # The board reads membership off the theme; the canvas reads it off a card.
+    assert ref in next(t for t in after["themes"] if t["id"] == theme["id"])["refs"]
+    assert any(c["ref"] == ref and c["theme_id"] == theme["id"] for c in after["cards"])
 
 
 def test_a_themes_file_from_before_the_canvas_is_laid_out_on_it(tmp_path, library):
