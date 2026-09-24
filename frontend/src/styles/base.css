@@ -20,6 +20,26 @@ body {
   overflow: hidden;
 }
 
+/* The page is a column that fills the window exactly once, and the part in the
+ * middle -- the transcript, the quote list, the tray -- is what scrolls.
+ *
+ * That only works if every box between the window and the scrolling one is
+ * height-constrained, and React mounts into a div that sits in the middle of
+ * that chain. Left as a plain block it grows to fit its content, every `flex: 1`
+ * below it has a parent that is not a flex container and so means nothing, and
+ * the scrolling box ends up exactly as tall as what is in it -- nothing to
+ * scroll, with `overflow: hidden` on the body quietly clipping the rest.
+ *
+ * `min-height: 0` is the other half: a flex item will not shrink below its
+ * content without it, which is the same bug one level down.
+ */
+#root {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
