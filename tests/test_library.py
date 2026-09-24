@@ -1,11 +1,12 @@
 """The library: many recordings at once, and the themes built across them."""
 
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
 
-from subtitle_search.app import create_app
+from subtitle_search.app import WEB_DIR, create_app
 from subtitle_search.library import (
     AREA_HEAD,
     AREA_PAD,
@@ -206,6 +207,20 @@ def test_library_page_is_served_for_many_recordings(client):
     assert "Library" in api.get("/").text
     assert "<title>Themes</title>" in api.get("/themes").text
     assert "id=\"transcript\"" in api.get("/reader").text
+
+
+def test_the_built_page_names_assets_that_are_actually_there(client):
+    """A page whose bundle is missing is a build somebody forgot to commit.
+
+    The interface is built and the output is committed, which means the HTML and
+    the hashed files it names can go into a commit separately. Nothing else in
+    the suite would notice: the page still serves, and it is blank.
+    """
+    api, _ = client
+    named = re.findall(r"/assets/([\w.\-]+)", api.get("/").text)
+    assert named, "the built page names no assets -- run npm run build in frontend/"
+    for name in named:
+        assert (WEB_DIR / "assets" / name).exists(), f"{name} is named but not built"
 
 
 def test_the_home_page_is_the_library_even_for_one_recording(tmp_path):

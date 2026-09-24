@@ -1,0 +1,177 @@
+/* The library and the search results over it.
+ *
+ * The reader is one long document; this page is an index over many. Same palette
+ * and the same quiet metadata, laid out as cards rather than hung off the time
+ * spine, which belongs to a single session.
+ */
+
+.sheet {
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 6rem;
+}
+
+.sheet__head {
+  margin: 2rem 0 0.875rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.sheet > section:first-child .sheet__head,
+.sheet > .sheet__head:first-child { margin-top: 0; }
+
+/* The heading's own top margin collapses through the section box, so the gap
+   after a grid of cards comes from the section instead. */
+.sheet > section + section { margin-top: 2rem; display: block; }
+
+.sheet__head .btn { margin-left: auto; }
+
+/* ----------------------------------------------------------------- cards -- */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: 0.75rem;
+}
+
+.card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--rule);
+  border-radius: var(--r-md);
+  padding: 0.875rem 1rem;
+  box-shadow: var(--shadow-1);
+}
+
+.card:hover {
+  border-left-color: var(--marker);
+  box-shadow: var(--shadow-2);
+}
+
+/* A recording's title is a person's name, not a measurement, so it is set in
+   the reading face -- which makes this index read as a table of contents. */
+.card__title {
+  margin: 0 0 0.5rem;
+  font-family: var(--serif);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.card__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+}
+
+.card__fact {
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.card__fact--time {
+  font-family: var(--mono);
+  text-transform: none;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.card__fact--warn { color: var(--dot-rose); }
+
+.card__quotes { margin: 0 0 0.5rem; font-size: 0.75rem; color: var(--ink-soft); }
+.card__quotes strong { color: var(--marker); font-family: var(--mono); }
+
+/* ------------------------------------------------------------- tag rails -- */
+
+.tag-rail { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+
+.tag-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  text-decoration: none;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  padding: 0.25rem 0.75rem;
+  color: var(--ink);
+}
+
+.tag-chip:hover { border-color: var(--marker); background: var(--paper-hover); }
+.tag-chip__name { font-size: 0.75rem; }
+
+.tag-chip__counts {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------- result cards -- */
+
+.results-strip { margin-bottom: 1rem; }
+
+.result {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--paper-raised);
+  margin-bottom: 0.375rem;
+}
+
+.result:hover { background: var(--paper-hover); border-color: var(--ink-faint); }
+
+.result__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.result__speaker {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.result__kind {
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0 0.3rem;
+}
+
+.result__time {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* What was said, so: the reading face, as everywhere else a quote appears. */
+.result__text {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.result__text mark {
+  background: var(--hl-amber);
+  color: inherit;
+  border-radius: var(--r-xs);
+  padding: 0.05em 0;
+}

@@ -1,0 +1,288 @@
+/* The reset, the page frame, and the controls every page uses. */
+
+* { box-sizing: border-box; }
+
+/* Class selectors that set `display` would otherwise beat the user-agent
+ * `[hidden] { display: none }` rule, leaving hidden panels on screen. */
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* ---------------------------------------------------------------- topbar -- */
+
+.topbar {
+  flex: 0 0 auto;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.topbar__identity { min-width: 0; flex: 0 1 auto; }
+
+.topbar__title {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The root path can be long enough to reach the search box, so it is the part
+   that gives way -- the counts after it matter more than the middle of a path. */
+.topbar__meta {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.topbar__search {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.topbar__actions { display: flex; gap: 0.375rem; flex: 0 0 auto; }
+
+/* -------------------------------------------------------------- controls -- */
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: min(28rem, 100%);
+  padding: 0 0.625rem;
+  height: 2rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+}
+
+.field:focus-within { border-color: var(--marker); }
+
+.field__key {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-xs);
+  padding: 0 0.3rem;
+  line-height: 1.3;
+}
+
+.field input {
+  flex: 1;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  outline: none;
+  min-width: 0;
+}
+
+.btn, .toggle {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0 0.625rem;
+  height: 2rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.btn:hover, .toggle:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+  background: var(--paper-hover);
+}
+
+.btn[aria-pressed="true"], .toggle[aria-pressed="true"],
+.btn[aria-current="page"] {
+  background: var(--marker-wash);
+  border-color: var(--marker);
+  color: var(--marker);
+}
+
+.btn--icon { padding: 0; width: 2rem; justify-content: center; }
+
+.toggle { font-family: var(--mono); }
+
+.tabs { display: inline-flex; gap: 0.375rem; }
+.tabs .btn { text-decoration: none; }
+
+/* A number, so it is set as one and does not change width as it increments. */
+.count {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.btn[aria-pressed="true"] .count { color: inherit; }
+
+.empty {
+  margin: 0;
+  padding: 1rem 0;
+  color: var(--ink-faint);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+/* ----------------------------------------------------------------- sheet -- */
+
+/* The plain scrolling page: the library, and signals. */
+.sheet {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem var(--pad-x) 4rem;
+}
+
+.sheet__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin: 1.5rem 0 0.75rem;
+}
+
+.sheet__head:first-child { margin-top: 0; }
+
+.sheet__title {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--ink-faint);
+}
+
+.sheet__count {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ tags -- */
+
+/* Tags are coined words, not measurements, so they are set in the text face.
+   The count beside one is a number and stays in the mono. */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.6875rem;
+  color: var(--ink-soft);
+  background: var(--paper-hover);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r-pill);
+  padding: 0.1rem 0.5rem;
+}
+
+.tag__count {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.tags { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+
+/* ---------------------------------------------------------------- toasts -- */
+
+.notices {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: min(24rem, calc(100vw - 2rem));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-3);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.toast--going { opacity: 0; transition: opacity 180ms ease; }
+
+.toast__mark {
+  flex: 0 0 auto;
+  width: 3px;
+  align-self: stretch;
+  border-radius: var(--r-xs);
+  background: var(--marker);
+}
+
+.toast--warn .toast__mark { background: var(--dot-amber); }
+
+.toast__text { flex: 1; min-width: 0; }
+
+.toast__act, .toast__close {
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink-soft);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.toast__act:hover, .toast__close:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+
+.toast__close { border: 0; background: none; padding: 0 0.2rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast--going { transition: none; }
+}

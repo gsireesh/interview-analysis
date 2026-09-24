@@ -1,0 +1,154 @@
+/* The palette, the radii and the shadows.
+ *
+ * Surfaces are white and chrome is grey, so a card no longer separates from the
+ * page by being tinted a different colour -- it separates by a hairline rule and,
+ * when it genuinely floats, a shadow. That is the one rule the rest of the
+ * stylesheet leans on.
+ *
+ * No web fonts. The server makes no outbound requests, so type is drawn entirely
+ * from system faces; Iowan Old Style and Charter are the reading serifs on macOS.
+ * The serif is for what people said, everywhere it appears -- the reader, the
+ * sidebar, the tray, a canvas card, the play queue -- so a quote is recognisably
+ * a quote wherever it has got to.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces. --paper-raised used to be a tint lighter than --paper; on white
+     it cannot be, so it is white plus a hairline, and hover got its own token. */
+  --paper: #ffffff;
+  --paper-raised: #ffffff;
+  --paper-hover: #f3f4f7;
+  --paper-sunk: #eef0f4;
+
+  --ink: #16181d;
+  --ink-soft: #50555d;
+  --ink-faint: #6b7280;
+
+  --rule: #dcdfe6;
+  --rule-soft: #e9ebf0;
+
+  /* One loud element, and it is the spine. Pen-ink blue rather than UI blue,
+     and deliberately outside all five highlight hues so a violet-highlighted
+     quote sitting in the marker wash is not two shades of one colour meaning
+     two unrelated things. */
+  --marker: #2b4c7e;
+  --marker-wash: rgba(43, 76, 126, 0.10);
+  --focus: #2b4c7e;
+
+  /* Washes over white. Retuned from the values that sat on warm paper: white
+     subtracts the body the tint used to contribute, so the alphas come up and
+     the hues move apart. Teal and sage were the pair closest to each other. */
+  --hl-amber: rgba(232, 163, 23, 0.42);
+  --hl-teal: rgba(14, 155, 155, 0.34);
+  --hl-rose: rgba(224, 70, 111, 0.30);
+  --hl-violet: rgba(123, 92, 240, 0.28);
+  --hl-sage: rgba(95, 158, 70, 0.34);
+
+  /* The solid spine down the edge of a card. These carry the only tie between a
+     card and its highlight colour, so they have to clear 3:1 against white --
+     three of the five did not before. */
+  --dot-amber: #b07800;
+  --dot-teal: #0b8b8b;
+  --dot-rose: #cc3360;
+  --dot-violet: #6b4fd8;
+  --dot-sage: #4f8a38;
+
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+
+  --shadow-1: 0 1px 2px rgba(16, 18, 22, 0.06);
+  --shadow-2: 0 2px 6px rgba(16, 18, 22, 0.07), 0 1px 2px rgba(16, 18, 22, 0.05);
+  --shadow-3: 0 6px 16px rgba(16, 18, 22, 0.10), 0 2px 5px rgba(16, 18, 22, 0.06);
+  --shadow-4: 0 16px 40px rgba(16, 18, 22, 0.16), 0 4px 10px rgba(16, 18, 22, 0.08);
+
+  --serif: "Iowan Old Style", "Charter", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace;
+
+  --gutter: 4.25rem;
+  --spine-gap: 1.75rem;
+  --pad-x: 2rem;
+  --spine-x: calc(var(--pad-x) + var(--gutter) + var(--spine-gap) / 2);
+  --measure: 40rem;
+  --topbar-h: 3.5rem;
+}
+
+/* Dark is a neutral near-black, not a tinted one. Shadow does almost nothing
+   here, so every shadow token carries a hairline light ring as its first layer
+   and the lift comes from the fill instead. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #171719;
+    --paper-raised: #202024;
+    --paper-hover: #26262b;
+    --paper-sunk: #0e0e10;
+
+    --ink: #e9e9ec;
+    --ink-soft: #a3a3ab;
+    --ink-faint: #82828c;
+
+    --rule: #32323a;
+    --rule-soft: #27272d;
+
+    --marker: #8fb0f2;
+    --marker-wash: rgba(143, 176, 242, 0.16);
+    --focus: #8fb0f2;
+
+    --hl-amber: rgba(232, 163, 23, 0.30);
+    --hl-teal: rgba(14, 155, 155, 0.30);
+    --hl-rose: rgba(224, 70, 111, 0.28);
+    --hl-violet: rgba(123, 92, 240, 0.30);
+    --hl-sage: rgba(95, 158, 70, 0.30);
+
+    --dot-amber: #e3ae3c;
+    --dot-teal: #37bfb7;
+    --dot-rose: #f0728e;
+    --dot-violet: #a58cff;
+    --dot-sage: #86c46c;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.40), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    --shadow-3: 0 6px 18px rgba(0, 0, 0, 0.50), 0 0 0 1px rgba(255, 255, 255, 0.06);
+    --shadow-4: 0 18px 44px rgba(0, 0, 0, 0.60), 0 0 0 1px rgba(255, 255, 255, 0.07);
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #171719;
+  --paper-raised: #202024;
+  --paper-hover: #26262b;
+  --paper-sunk: #0e0e10;
+
+  --ink: #e9e9ec;
+  --ink-soft: #a3a3ab;
+  --ink-faint: #82828c;
+
+  --rule: #32323a;
+  --rule-soft: #27272d;
+
+  --marker: #8fb0f2;
+  --marker-wash: rgba(143, 176, 242, 0.16);
+  --focus: #8fb0f2;
+
+  --hl-amber: rgba(232, 163, 23, 0.30);
+  --hl-teal: rgba(14, 155, 155, 0.30);
+  --hl-rose: rgba(224, 70, 111, 0.28);
+  --hl-violet: rgba(123, 92, 240, 0.30);
+  --hl-sage: rgba(95, 158, 70, 0.30);
+
+  --dot-amber: #e3ae3c;
+  --dot-teal: #37bfb7;
+  --dot-rose: #f0728e;
+  --dot-violet: #a58cff;
+  --dot-sage: #86c46c;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.40), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --shadow-3: 0 6px 18px rgba(0, 0, 0, 0.50), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-4: 0 18px 44px rgba(0, 0, 0, 0.60), 0 0 0 1px rgba(255, 255, 255, 0.07);
+}

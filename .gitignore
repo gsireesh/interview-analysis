@@ -10,6 +10,11 @@ dist/
 venv/
 env/
 
+# Node, for the interface. Note what is NOT ignored: subtitle_search/web/ is the
+# built frontend and is committed on purpose, so installing the tool from a
+# wheel never needs Node or a registry.
+frontend/node_modules/
+
 # Tooling
 .pytest_cache/
 .coverage
