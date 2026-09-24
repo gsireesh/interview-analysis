@@ -13,7 +13,7 @@
  *   the browser is streaming with range requests.
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { applyRate, partAt, partUrl, storedRate, SEEK_LEAD_IN } from "../lib/player.js";
 
 export function usePlayer({ recordingId, parts, duration, onTime, onPlaying }) {
@@ -109,37 +109,55 @@ export function usePlayer({ recordingId, parts, duration, onTime, onPlaying }) {
     else node.pause();
   }, []);
 
-  // Registered once. Everything it needs that can change is read through refs,
-  // so the handlers never go stale and the listeners never churn.
-  useEffect(() => {
-    const node = media.current;
-    if (!node) return;
+  /**
+   * Bind to the media element as it mounts, rather than after the first render.
+   *
+   * The dock is not rendered until the recording has loaded and turns out to
+   * have media, so on the first render there is no <video> to listen to. An
+   * effect would run exactly then, find nothing, and -- since everything it
+   * depends on is stable by design -- never run again: the element appears a
+   * moment later with nobody listening to it, and the clock, the scrubber, the
+   * play button and the whole of following mode sit frozen while the audio
+   * plays. A ref callback fires when the node actually arrives.
+   */
+  const attach = useCallback(
+    (node) => {
+      media.current = node;
+      if (!node) return undefined;
 
-    const tick = () => {
-      if (scrubbing.current) return;
-      live.current.onTime?.(sessionTime());
-    };
-    const playing = () => live.current.onPlaying?.(true);
-    const stopped = () => live.current.onPlaying?.(false);
-    const ended = () => {
-      // Playing off the end of one recording continues into the next, so a
-      // session interrupted by Zoom still reads as one sitting.
-      const next = activePart.current + 1;
-      if (next < live.current.parts.length) activate(next, 0, { play: true });
-      else live.current.onPlaying?.(false);
-    };
+      const tick = () => {
+        if (scrubbing.current) return;
+        live.current.onTime?.(sessionTime());
+      };
+      const playing = () => live.current.onPlaying?.(true);
+      const stopped = () => live.current.onPlaying?.(false);
+      const ended = () => {
+        // Playing off the end of one recording continues into the next, so a
+        // session interrupted by Zoom still reads as one sitting.
+        const next = activePart.current + 1;
+        if (next < live.current.parts.length) activate(next, 0, { play: true });
+        else live.current.onPlaying?.(false);
+      };
 
-    node.addEventListener("timeupdate", tick);
-    node.addEventListener("play", playing);
-    node.addEventListener("pause", stopped);
-    node.addEventListener("ended", ended);
-    return () => {
-      node.removeEventListener("timeupdate", tick);
-      node.removeEventListener("play", playing);
-      node.removeEventListener("pause", stopped);
-      node.removeEventListener("ended", ended);
-    };
-  }, [activate, sessionTime]);
+      node.addEventListener("timeupdate", tick);
+      node.addEventListener("play", playing);
+      node.addEventListener("pause", stopped);
+      node.addEventListener("ended", ended);
+      return () => {
+        node.removeEventListener("timeupdate", tick);
+        node.removeEventListener("play", playing);
+        node.removeEventListener("pause", stopped);
+        node.removeEventListener("ended", ended);
+        media.current = null;
+      };
+    },
+    [activate, sessionTime]
+  );
 
-  return { media, activate, seek, cue, seekAndPlay, nudge, togglePlay, sessionTime, scrubbing };
+  // One stable object. Returning a fresh literal would re-run every consumer
+  // effect that depends on the player on every single render.
+  return useMemo(
+    () => ({ media, attach, activate, seek, cue, seekAndPlay, nudge, togglePlay, sessionTime, scrubbing }),
+    [attach, activate, seek, cue, seekAndPlay, nudge, togglePlay, sessionTime]
+  );
 }

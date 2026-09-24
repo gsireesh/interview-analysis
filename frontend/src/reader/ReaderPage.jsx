@@ -103,21 +103,26 @@ export default function ReaderPage() {
   const cursor = useCursor({ chunks, geometry });
   const selection = useSelection(chunksRef, cueById);
 
-  const onTime = useCallback(
-    (seconds) => {
-      currentTime.current = seconds;
-      if (clockRef.current) clockRef.current.textContent = formatTime(seconds);
-      if (scrubRef.current && duration) {
-        scrubRef.current.value = String(Math.round((seconds / duration) * 1000));
-      }
-      if (cursorMode.current !== "following") return;
-      const index = chunkIndexAtTime(geometry.starts.current, seconds);
-      if (index !== cursorIndex.current) cursor.setCursor(index, { scroll: true });
-      else paintSpine();
-    },
-    // paintSpine and cursor are stable; the refs carry everything that moves.
-    [duration] // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  // Everything the playhead handler touches, refreshed every render. It is
+  // registered once against the media element, so anything captured in its
+  // closure would be frozen at the first render -- when the recording had not
+  // loaded, `setCursor` still clamped every index to 0 and the spine had no
+  // blocks to measure. Following mode would have pinned the transcript to the
+  // first block for the life of the page.
+  const tick = useRef({});
+
+  const onTime = useCallback((seconds) => {
+    const now = tick.current;
+    currentTime.current = seconds;
+    if (clockRef.current) clockRef.current.textContent = formatTime(seconds);
+    if (scrubRef.current && now.duration) {
+      scrubRef.current.value = String(Math.round((seconds / now.duration) * 1000));
+    }
+    if (cursorMode.current !== "following") return;
+    const index = chunkIndexAtTime(geometry.starts.current, seconds);
+    if (index !== cursorIndex.current) now.setCursor(index, { scroll: true });
+    else now.paintSpine();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onPlaying = useCallback(
     (isPlaying) => {
@@ -157,6 +162,11 @@ export default function ReaderPage() {
     dot.hidden = false;
     dot.style.top = `${progress * 100}%`;
   }, [chunks, geometry]);
+
+  // Refreshed on every render, and read only from inside onTime. It has to sit
+  // below paintSpine rather than beside the callback that uses it: these are
+  // consts, so naming one before it is declared is a crash, not a stale value.
+  tick.current = { duration, setCursor: cursor.setCursor, paintSpine };
 
   useEffect(paintSpine, [paintSpine, cursor.index, cursor.mode]);
 
@@ -1102,9 +1112,17 @@ export default function ReaderPage() {
       {Boolean(playable.length) && (
         <Dock
           media={player.media}
+          attach={player.attach}
           duration={duration}
           playing={playing}
           anyVideo={anyVideo}
+          showFollow={playing && cursor.mode === "reading"}
+          onFollow={() => {
+            cursor.setMode("following");
+            cursor.setCursor(chunkIndexAtTime(geometry.starts.current, currentTime.current), {
+              scroll: true,
+            });
+          }}
           clockRef={clockRef}
           scrubRef={scrubRef}
           onTogglePlay={player.togglePlay}

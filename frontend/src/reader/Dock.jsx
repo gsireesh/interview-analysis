@@ -23,7 +23,7 @@ import {
   storedRate,
 } from "../lib/player.js";
 
-export default function Dock({ media, duration, playing, anyVideo, onTogglePlay, onScrub, clockRef, scrubRef }) {
+export default function Dock({ media, attach, duration, playing, anyVideo, showFollow, onFollow, onTogglePlay, onScrub, clockRef, scrubRef }) {
   // Whether you want the video showing is worth remembering between sessions.
   // A stored state from an older build may name one that no longer exists.
   const [expanded, setExpanded] = useState(() => anyVideo && recall(DOCK_KEY) === "expanded");
@@ -68,7 +68,7 @@ export default function Dock({ media, duration, playing, anyVideo, onTogglePlay,
         onKeyDown={onKeyGrip}
       />
       <div className="dock__stage" ref={stage}>
-        <video ref={media} playsInline preload="metadata" />
+        <video ref={attach} playsInline preload="metadata" />
       </div>
       <div className="dock__bar">
         <button
@@ -108,6 +108,13 @@ export default function Dock({ media, duration, playing, anyVideo, onTogglePlay,
             ))}
           </select>
         </label>
+        {/* Scrolling away from the audio drops back to reading without stopping
+            playback, which leaves no way back in except a keypress. This is it. */}
+        {showFollow && (
+          <button className="follow" type="button" onClick={onFollow}>
+            Follow along
+          </button>
+        )}
         {anyVideo && (
           <button
             className="btn btn--icon"
