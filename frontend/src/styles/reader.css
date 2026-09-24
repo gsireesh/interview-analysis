@@ -1,0 +1,1128 @@
+/* ------------------------------------------------------------- workspace -- */
+
+.workspace {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.reader {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader { scroll-behavior: auto; }
+}
+
+.transcript {
+  position: relative;
+  max-width: calc(var(--pad-x) * 2 + var(--gutter) + var(--spine-gap) + var(--measure));
+  margin: 0 auto;
+  padding: 3.5rem var(--pad-x) 60vh;
+}
+
+/* The spine itself: one continuous hairline the whole transcript hangs from. */
+.transcript::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--spine-x);
+  width: 1px;
+  background: var(--rule-soft);
+}
+
+/* -------------------------------------------------------- the spine mark -- */
+
+.spine-marker {
+  position: absolute;
+  left: calc(var(--spine-x) - 1px);
+  width: 3px;
+  background: var(--marker);
+  border-radius: var(--r-sm);
+  pointer-events: none;
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .spine-marker {
+    transition: top 260ms cubic-bezier(0.22, 1, 0.36, 1),
+                height 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+/* The exact playback position inside the current block, shown only while the
+ * transcript is following the audio -- otherwise it would imply a precision the
+ * reading cursor does not have. */
+.spine-marker__dot {
+  position: absolute;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  margin-left: -4.5px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--marker);
+  box-shadow: 0 0 0 3px var(--paper);
+}
+
+/* ---------------------------------------------------------------- chunks -- */
+
+.chunk {
+  display: grid;
+  grid-template-columns: var(--gutter) minmax(0, 1fr);
+  column-gap: var(--spine-gap);
+  padding: 0.75rem 0;
+  scroll-margin-top: 4rem;
+  scroll-margin-bottom: 40vh;
+}
+
+.chunk__time {
+  grid-column: 1;
+  justify-self: end;
+  /* The tick marks where the block begins, so it aligns with the first line
+     rather than drifting to the middle of a long turn. */
+  align-self: start;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  padding-top: 0.5rem;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  line-height: 1.4;
+}
+
+/* An I-beam over the prose: this is text to be pointed at and selected, not a
+   surface to be clicked. The block's own furniture -- the timestamp tick, the
+   inline quote marks -- keeps its pointer. */
+.chunk__body {
+  grid-column: 2;
+  min-width: 0;
+  cursor: text;
+}
+
+.chunk__speaker {
+  font-family: var(--sans);
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--ink-faint);
+  margin: 0.5rem 0 0.375rem;
+}
+
+.chunk__text {
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  line-height: 1.72;
+  color: var(--ink);
+  margin: 0 0 0.75em;
+  hyphens: auto;
+}
+
+.chunk__text:last-child { margin-bottom: 0; }
+
+.chunk--cursor .chunk__time { color: var(--marker); }
+.chunk--cursor .chunk__speaker { color: var(--ink-soft); }
+
+/* Reading is the default mode, so the cursor is a quiet ambient wash rather
+ * than a selection box -- it tells you where you are without shouting. */
+/* The wash reaches into the gutter on both sides. It used to do that with two
+   square box-shadows, which a rounded body would sit between looking broken --
+   so the block widens into the bleed and pads itself back, and one rounded
+   shape covers the whole thing. */
+.chunk--cursor .chunk__body {
+  background: var(--marker-wash);
+  margin: 0 -0.75rem;
+  padding: 0 0.75rem;
+  border-radius: var(--r-md);
+}
+
+.chunk--dim .chunk__text { color: var(--ink-soft); }
+
+.cue { border-radius: var(--r-sm); }
+
+.cue--flash {
+  animation: flash 1.4s ease-out;
+}
+
+@keyframes flash {
+  0%, 30% { background: var(--marker-wash); box-shadow: 0 0 0 3px var(--marker-wash); }
+  100% { background: transparent; box-shadow: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cue--flash { animation: none; background: var(--marker-wash); }
+}
+
+/* ---------------------------------------------------------- editing mode -- */
+
+/* Reading shows merged prose; correcting shows the captions underneath, because
+ * that is the unit that gets written back to the file. */
+.edit-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.edit-bar__hint {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.03em;
+}
+
+.edit-bar__done {
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--marker);
+  background: var(--marker-wash);
+  border: 1px solid var(--marker);
+  border-radius: var(--r-sm);
+  padding: 0.15rem 0.6rem;
+  cursor: pointer;
+}
+
+.chunk--editing .chunk__body {
+  background: var(--paper-raised);
+  margin: 0 -0.75rem;
+  padding: 0 0.75rem;
+  border-radius: var(--r-md);
+  outline: 1px solid var(--rule);
+}
+
+.cue-lines { display: flex; flex-direction: column; gap: 0.25rem; }
+
+.cue-line {
+  display: grid;
+  grid-template-columns: 1.25rem 3rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.5rem;
+  border-radius: var(--r-md);
+  padding: 0.125rem 0.25rem;
+}
+
+.cue-line:focus-within { background: var(--marker-wash); }
+
+.cue-line__play {
+  font-size: 0.5625rem;
+  line-height: 1;
+  color: var(--ink-faint);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: var(--r-sm);
+}
+
+.cue-line__play:hover { color: var(--marker); }
+
+.cue-line__time {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+.cue-line__text {
+  font-family: var(--serif);
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--ink);
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cue-line__text:focus { border-color: var(--marker); background: var(--paper); }
+
+.cue-line--saving .cue-line__text { opacity: 0.55; }
+.cue-line--saved .cue-line__text { border-color: var(--dot-sage); }
+.cue-line--failed .cue-line__text { border-color: var(--dot-rose); }
+
+/* ----------------------------------------------------------- part breaks -- */
+
+/* An interrupted session runs on one continuous timeline, so this marker is the
+ * only place the real interruption shows. It cuts across the spine, because
+ * that is exactly what happened: the recording stopped. */
+.part-break {
+  display: flex;
+  align-items: center;
+  margin: 2.5rem 0 2rem;
+  position: relative;
+  z-index: 3;
+}
+
+.part-break::before,
+.part-break::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.part-break__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  background: var(--paper);
+  padding: 0 0.75rem;
+}
+
+.part-break__clock { color: var(--marker); }
+
+/* ------------------------------------------------------------ highlights -- */
+
+mark.hl {
+  background: var(--hl-amber);
+  color: inherit;
+  padding: 0.1em 0;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+mark.hl--amber { background: var(--hl-amber); }
+mark.hl--teal { background: var(--hl-teal); }
+mark.hl--rose { background: var(--hl-rose); }
+mark.hl--violet { background: var(--hl-violet); }
+mark.hl--sage { background: var(--hl-sage); }
+
+mark.hl--active { box-shadow: 0 0 0 2px var(--marker); }
+
+mark.hl--noted::after {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  vertical-align: super;
+  margin-left: 2px;
+}
+
+/* --------------------------------------------------------------- sidebar -- */
+
+.sidebar {
+  flex: 0 0 22rem;
+  border-left: 1px solid var(--rule);
+  background: var(--paper-sunk);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+
+.panel__head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.875rem 1rem 0.625rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.panel__title {
+  margin: 0;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--ink-faint);
+}
+
+.panel__count {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12rem;
+}
+
+.panel__body { flex: 1 1 auto; overflow-y: auto; padding: 0.5rem; }
+
+.panel__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+}
+
+.panel__filters:not(:empty) { padding: 0.5rem; border-bottom: 1px solid var(--rule); }
+
+.empty {
+  margin: 0;
+  padding: 1.5rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+/* ---------------------------------------------------------- result cards -- */
+
+.result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  padding: 0.625rem 0.75rem;
+  cursor: pointer;
+  font: inherit;
+  border-radius: var(--r-md);
+}
+
+.result:hover { background: var(--paper-raised); border-left-color: var(--rule); }
+.result--active { border-left-color: var(--marker); background: var(--paper-raised); }
+
+.result__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.result__speaker {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result__time {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  flex: 0 0 auto;
+}
+
+.result__kind {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0 0.2rem;
+}
+
+.result__text {
+  font-family: var(--serif);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.result__text mark {
+  background: var(--marker-wash);
+  color: var(--ink);
+  font-weight: 600;
+  border-radius: var(--r-xs);
+}
+
+/* ------------------------------------------------------- highlight cards -- */
+
+.quote {
+  border-left: 2px solid var(--rule);
+  padding: 0.625rem 0.75rem;
+  margin-bottom: 0.25rem;
+  border-radius: var(--r-md);
+}
+
+.quote:hover { background: var(--paper-hover); }
+.quote--amber { border-left-color: var(--dot-amber); }
+.quote--teal { border-left-color: var(--dot-teal); }
+.quote--rose { border-left-color: var(--dot-rose); }
+.quote--violet { border-left-color: var(--dot-violet); }
+.quote--sage { border-left-color: var(--dot-sage); }
+
+.quote__text {
+  font-family: var(--serif);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  margin: 0 0 0.375rem;
+  cursor: pointer;
+}
+
+.quote__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+  margin-bottom: 0.375rem;
+}
+
+.quote__meta time { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.quote__speaker {
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote__tools { margin-left: auto; display: flex; gap: 0.25rem; flex: 0 0 auto; }
+
+.icon-btn {
+  background: none;
+  border: 0;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.6875rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: var(--r-sm);
+}
+
+.icon-btn:hover { color: var(--ink); background: var(--paper-sunk); }
+
+.quote__note, .quote__tags-input {
+  width: 100%;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.375rem 0.5rem;
+  resize: vertical;
+  margin-bottom: 0.25rem;
+}
+
+.quote__note::placeholder, .quote__tags-input::placeholder { color: var(--ink-faint); }
+
+.tags { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+
+.tag {
+  font-size: 0.625rem;
+  font-family: var(--mono);
+  color: var(--ink-soft);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  padding: 0.05rem 0.4rem;
+  cursor: pointer;
+}
+
+.tag[aria-pressed="true"] {
+  background: var(--marker-wash);
+  border-color: var(--marker);
+  color: var(--marker);
+}
+
+.tag__count {
+  margin-left: 0.3rem;
+  color: var(--ink-faint);
+  font-size: 0.5625rem;
+}
+
+.tag[aria-pressed="true"] .tag__count { color: inherit; }
+
+/* A newly saved quote is scrolled into view; this says which one it was. */
+.quote--new { animation: quote-in 1.8s ease-out; }
+
+@keyframes quote-in {
+  0%, 25% { background: var(--marker-wash); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quote--new { animation: none; background: var(--marker-wash); }
+}
+
+.swatches { display: flex; gap: 0.25rem; }
+
+.swatch {
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  padding: 0;
+}
+
+.swatch--amber { background: var(--dot-amber); }
+.swatch--teal { background: var(--dot-teal); }
+.swatch--rose { background: var(--dot-rose); }
+.swatch--violet { background: var(--dot-violet); }
+.swatch--sage { background: var(--dot-sage); }
+
+.swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--ink-soft); }
+
+/* ------------------------------------------------------------------ dock -- */
+
+.dock {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--rule);
+  background: var(--paper-raised);
+}
+
+.dock__stage {
+  display: none;
+  background: #000;
+  border-bottom: 1px solid var(--rule);
+  text-align: center;
+}
+
+/* Expanded opens to a reference size, but how much of the window the video
+   deserves depends on what you are doing, so it is draggable from there. */
+.dock[data-state="expanded"] .dock__stage {
+  display: block;
+  height: var(--dock-height, 34vh);
+}
+
+/* The transport bar has no collapsed state: it is always on screen whenever
+ * there is a recording at all. Only the video surface above it opens and
+ * closes. */
+
+.dock__stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.dock__grip {
+  display: none;
+  height: 9px;
+  cursor: ns-resize;
+  background: var(--paper-raised);
+  border-bottom: 1px solid var(--rule);
+  position: relative;
+  touch-action: none;
+}
+
+.dock[data-state="expanded"] .dock__grip { display: block; }
+
+.dock__grip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2.5rem;
+  height: 3px;
+  margin: -1.5px 0 0 -1.25rem;
+  border-radius: var(--r-sm);
+  background: var(--rule);
+}
+
+.dock__grip:hover::after,
+.dock__grip:focus-visible::after { background: var(--marker); }
+
+.dock--resizing { user-select: none; }
+.dock--resizing .dock__grip::after { background: var(--marker); }
+
+/* Audio-only recordings still need the element for playback, but there is
+ * nothing to look at, so the stage never opens. */
+.dock[data-media="audio"] .dock__stage { display: none; }
+
+.dock__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+}
+
+.transport {
+  font: inherit;
+  font-size: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.transport:hover { border-color: var(--marker); color: var(--marker); }
+
+.clock {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+
+.clock--muted { color: var(--ink-faint); }
+
+.scrub {
+  flex: 1 1 auto;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 3px;
+  background: var(--rule);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--marker);
+  border: 0;
+}
+
+.scrub::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--marker);
+  border: 0;
+}
+
+.follow {
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--marker);
+  background: var(--marker-wash);
+  border: 1px solid var(--marker);
+  border-radius: var(--r-pill);
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+/* -------------------------------------------------------------- quotebar -- */
+
+.quotebar {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.4rem 0.625rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+}
+
+.quotebar__time {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--marker);
+}
+
+.quotebar__colors { display: flex; gap: 0.25rem; }
+
+.quotebar__action {
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--rule);
+  padding: 0.1rem 0 0.1rem 0.625rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quotebar__action:hover { color: var(--ink); }
+
+/* Handing a passage to whoever actually said it. Sits at the end of the bar,
+   after the quote actions, because it edits the transcript rather than reading
+   from it -- a different kind of act from saving a quote. */
+.quotebar__hand {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding-left: 0.625rem;
+  border-left: 1px solid var(--rule);
+}
+
+.quotebar__lead {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-faint);
+}
+
+.quotebar__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink-soft);
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0.05rem 0.35rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quotebar__who:hover { color: var(--marker); border-color: var(--marker); }
+
+.quotebar__none {
+  font-size: 0.6875rem;
+  font-style: italic;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.quotebar__who kbd {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+}
+
+/* ------------------------------------------------------------ responsive -- */
+
+@media (max-width: 60rem) {
+  :root { --gutter: 0rem; --spine-gap: 0rem; --pad-x: 1.25rem; }
+
+  .transcript::before, .spine-marker { display: none; }
+
+  .chunk { grid-template-columns: 1fr; }
+  .chunk__time { grid-column: 1; justify-self: start; padding-top: 0; }
+  .chunk__body { grid-column: 1; }
+  .chunk--cursor .chunk__body { box-shadow: none; }
+
+  .sidebar { position: fixed; inset: var(--topbar-h) 0 0 auto; width: min(22rem, 100%); z-index: 30; }
+  .sidebar[hidden] { display: none; }
+  .topbar { flex-wrap: wrap; height: auto; padding: 0.5rem 0.75rem; }
+  .topbar__search { order: 3; flex-basis: 100%; }
+}
+
+
+/* ============================================================== tag field ==
+ *
+ * Tags are tokens, so the field holds tokens. The suggestion list carries how
+ * widely each tag is already used across the study, because the decision it is
+ * there to inform is "reuse this or coin another one".
+ */
+
+.tagfield {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+}
+
+.tagfield:focus-within { border-color: var(--marker); }
+
+.tagfield__chips { display: contents; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  padding: 0.1rem 0.2rem 0.1rem 0.5rem;
+}
+
+.chip__x {
+  background: none;
+  border: 0;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font-size: 0.5625rem;
+  line-height: 1;
+  padding: 0.15rem;
+  border-radius: 50%;
+}
+
+.chip__x:hover { color: var(--dot-rose); background: var(--paper-sunk); }
+
+.tagfield__input {
+  flex: 1;
+  min-width: 6rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.6875rem;
+  padding: 0.15rem 0.25rem;
+  outline: none;
+}
+
+.tagfield__input::placeholder { color: var(--ink-faint); }
+
+.tagfield__list {
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: calc(100% + 2px);
+  z-index: 30;
+  margin: 0;
+  padding: 0.2rem;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--paper-raised);
+  border: 1px solid var(--marker);
+  border-radius: var(--r-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.tagfield__option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.tagfield__option[aria-selected="true"] { background: var(--marker-wash); }
+.tagfield__option:hover { background: var(--paper-sunk); }
+
+.tagfield__tag { font-size: 0.75rem; color: var(--ink); }
+
+/* How established the tag already is -- the reason to pick it over a new one. */
+.tagfield__use {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.tagfield__option--new .tagfield__tag { font-style: italic; }
+.tagfield__option--new .tagfield__use { color: var(--marker); }
+
+/* Playback speed. Sits with the clock because it is a property of the playing,
+   not a setting -- and gets a word rather than only a number so it is legible
+   next to two timecodes. */
+.rate { display: inline-flex; align-items: center; gap: 0.35rem; flex: 0 0 auto; }
+
+.rate__label {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.rate__select {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0.15rem 0.2rem;
+  cursor: pointer;
+}
+
+.rate__select:hover { border-color: var(--ink-faint); }
+.rate__select:focus-visible { border-color: var(--marker); }
+
+/* Who said a line, editable alongside what they said. Zoom attributes badly:
+   a trailing clause lands under whoever spoke before it, and an in-person
+   recording files the whole room under one name. */
+.cue-line {
+  grid-template-columns: 1.25rem 3rem 8rem minmax(0, 1fr);
+}
+
+.cue-line__who {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0.2rem 0.3rem;
+  min-width: 0;
+}
+
+.cue-line__who:focus { border-color: var(--marker); outline: none; color: var(--ink); }
+.cue-line__who::placeholder { color: var(--ink-faint); font-style: italic; }
+
+@media (max-width: 60rem) {
+  .cue-line { grid-template-columns: 1.25rem 3rem minmax(0, 1fr); }
+  .cue-line__who { grid-column: 1 / -1; }
+}
+
+/* The speaker keys, on screen so the bindings are never something to remember.
+   Digits by default: nothing else in the reader uses them, and 1-5 fall under
+   the hand that is not on the trackpad. */
+.roster {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  padding: 0.375rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-sunk);
+}
+
+.roster__lead {
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-faint);
+}
+
+.roster__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font: inherit;
+  font-size: 0.6875rem;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  padding: 0.1rem 0.6rem 0.1rem 0.25rem;
+  cursor: pointer;
+}
+
+.roster__who:hover { border-color: var(--marker); }
+
+.roster__who kbd {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--marker);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: 0 0.3rem;
+}
+
+/* A block broken open for labelling. Marked, because a run of one-line blocks
+   otherwise looks like a transcript that arrived that way. */
+.chunk--split .chunk__body {
+  border-left: 2px solid var(--rule);
+  padding-left: 0.625rem;
+  margin-left: -0.75rem;
+}
+
+.chunk--split.chunk--cursor .chunk__body { border-left-color: var(--marker); }
+
+.roster__who { display: inline-flex; align-items: center; }
+.roster__hit {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font: inherit; font-size: 0.6875rem; color: var(--ink);
+  background: var(--paper-raised); border: 1px solid var(--rule);
+  border-right: 0; border-radius: var(--r-pill) 0 0 var(--r-pill);
+  padding: 0.1rem 0.4rem 0.1rem 0.25rem; cursor: pointer;
+}
+.roster__hit:hover { border-color: var(--marker); }
+.roster__edit {
+  font: inherit; font-size: 0.5625rem; color: var(--ink-faint);
+  background: var(--paper-raised); border: 1px solid var(--rule); border-left: 0;
+  padding: 0.2rem 0.35rem; cursor: pointer;
+}
+.roster__who .roster__edit:last-child { border-radius: 0 var(--r-pill) var(--r-pill) 0; }
+.roster__edit:hover { color: var(--ink); }
+.roster__empty { font-size: 0.6875rem; color: var(--ink-faint); font-style: italic; }
+.roster__suggest {
+  font: inherit; font-size: 0.625rem; color: var(--ink-soft);
+  background: none; border: 1px dashed var(--rule); border-radius: var(--r-pill);
+  padding: 0.1rem 0.5rem; cursor: pointer;
+}
+.roster__suggest:hover { border-color: var(--marker); color: var(--marker); }
+.roster__field {
+  font: inherit; font-size: 0.6875rem; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--rule);
+  border-radius: var(--r-sm); padding: 0.15rem 0.35rem;
+}
+.roster__field--key { width: 2.5rem; font-family: var(--mono); text-align: center; }
+.roster__field:focus { border-color: var(--marker); outline: none; }
+
+
+/* -------------------------------------------------------- word timings -- */
+
+/* Same strip as the roster: a quiet line of state under the header, not a
+   panel. It appears only when there is something to say about timings. */
+.timing {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.375rem 1rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-sunk);
+}
+
+.timing__state,
+.timing__why {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  color: var(--ink-faint);
+}
+
+.timing__why { font-style: italic; }
+
+.timing__bar {
+  flex: 0 1 12rem;
+  height: 3px;
+  border-radius: var(--r-sm);
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.timing__fill {
+  display: block;
+  height: 100%;
+  background: var(--marker);
+  transition: width 160ms linear;
+}
+
+/* A measured block's tick is underscored: the timestamp is a measurement, not
+   an interpolation, and the reader should be able to tell without asking. */
+.chunk__time--measured {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--marker);
+}
+

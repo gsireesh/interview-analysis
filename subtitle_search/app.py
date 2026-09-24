@@ -59,7 +59,7 @@ WEB_DIR = Path(__file__).parent / "web"
 
 #: The HTML entry points, and the built file behind each. A page that has not
 #: been ported yet is served from static/ instead; see `_page`.
-PAGES = {"/": "library.html", "/reader": None, "/themes": None}
+PAGES = {"/": "library.html", "/reader": "reader.html", "/themes": None}
 
 #: Tells "the client said nothing about where this card came from" apart from
 #: "it came from the bare canvas", which is a real answer and arrives as null.

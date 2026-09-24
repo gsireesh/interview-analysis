@@ -202,11 +202,18 @@ def test_search_spans_every_transcript(client):
     assert {hit["recording_title"] for hit in body["results"]} == {"P01", "P02", "P03"}
 
 
-def test_library_page_is_served_for_many_recordings(client):
+def test_each_url_serves_its_own_page(client):
+    """Three URLs, three documents -- not one shell that decides later.
+
+    The interface is built as three entry points rather than a single-page app,
+    so this is the thing worth holding: /reader serves the reader and not the
+    library. The markup inside is rendered in the browser, so the title is what
+    identifies a page from here.
+    """
     api, _ = client
-    assert "Library" in api.get("/").text
+    assert "<title>Library</title>" in api.get("/").text
     assert "<title>Themes</title>" in api.get("/themes").text
-    assert "id=\"transcript\"" in api.get("/reader").text
+    assert "<title>Transcript</title>" in api.get("/reader").text
 
 
 def test_the_built_page_names_assets_that_are_actually_there(client):

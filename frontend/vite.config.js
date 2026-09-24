@@ -56,7 +56,7 @@ export default defineConfig({
       // Entries are added as each page is ported; until then the server keeps
       // serving the hand-written page from static/, so web/ never holds a
       // half-built one.
-      input: { library: page("library") },
+      input: { library: page("library"), reader: page("reader") },
     },
   },
 });
