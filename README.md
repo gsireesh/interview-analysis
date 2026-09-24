@@ -468,9 +468,9 @@ keep opening new ones.
 
 **Only this package is watched.** Your recording folder is not, on purpose —
 quotes and word timings are written into it constantly, and saving a quote should
-not restart the server that just saved it. Frontend files need no reload at all:
-the HTML, CSS and JS are read from disk per request, so a browser refresh is
-enough.
+not restart the server that just saved it. `subtitle_search/web/` is not watched
+either: it is built rather than written, so rebuilding the interface does not
+restart the server underneath it.
 
 Reloading re-imports the app in a fresh process, which means it cannot be handed
 an app that is already built. The folder therefore travels in
@@ -478,6 +478,36 @@ an app that is already built. The folder therefore travels in
 so every reload also re-reads the folder, and a transcript corrected outside the
 tool shows up. `watchfiles` in the `dev` extra makes the watching event-based;
 without it uvicorn polls instead and reload still works.
+
+### Working on the interface
+
+The interface is React, built with Vite. Working on it means two processes: the
+server for the data, and Vite for the page.
+
+```bash
+uv run subtitle-search ~/study/P01 --reload   # :8765, the data
+cd frontend && npm install && npm run dev     # :5173, the interface — open this
+```
+
+Open **5173**, not 8765. Vite proxies `/api` — the transcripts, the quotes, and
+the media, which is range-requested — through to the server, and replaces the
+browser refresh with Fast Refresh.
+
+The built output is **committed**, in `subtitle_search/web/`, which is why
+installing the tool needs no Node at all. The price is that it can go stale:
+
+```bash
+cd frontend && npm run build     # before committing an interface change
+```
+
+A test reads the asset names out of the page the server sends and checks the
+files are there, so a build somebody forgot fails the suite rather than shipping
+a blank page.
+
+Four dependencies — React, React DOM, Vite and the React plugin — pinned below
+their next major with the lockfile committed, for the same reason the Python
+requirements are: a study opened in three years should not need a registry to
+still be openable.
 
 ## A library of recordings
 
@@ -821,7 +851,9 @@ pytest
 
 Tests run against synthetic VTT fixtures in `tests/fixtures.py`, including the
 mid-sentence-colon trap, CRLF endings, voice tags, speakerless transcripts, and
-byte-exact HTTP Range serving.
+byte-exact HTTP Range serving. They cover the Python side and the HTTP contract
+the interface is written against; see [Working on the
+interface](#working-on-the-interface) for the frontend.
 
 ## Not built yet
 
