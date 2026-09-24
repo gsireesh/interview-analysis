@@ -18,6 +18,63 @@ subtitle-search /path/to/recording-folder
 
 It opens `http://127.0.0.1:8765`.
 
+## The workflow
+
+**Download → anonymize → analyze.** Three steps, and the middle one is why the
+folder layout matters: the anonymizer is told exactly one thing, and it reads it
+off the folder name.
+
+```
+study/
+  raw/                                        ← 1. downloaded from Zoom
+    P01/
+      GMT20240301-140000_Recording.transcript.vtt
+      GMT20240301-140000_Recording_1920x1080.mp4
+    P02/
+      GMT20240302-093000_Recording.transcript.vtt
+      GMT20240302-093000_Recording.m4a
+  anonymized/                                 ← 2. written by the script
+    P01/
+      GMT20240301-140000_Recording.transcript.vtt
+      GMT20240301-140000_Recording_1920x1080.mp4
+    P02/
+      …
+```
+
+```bash
+python scripts/anonymize_zoom.py raw/ anonymized/ --dry-run   # 2. look first
+python scripts/anonymize_zoom.py raw/ anonymized/
+
+subtitle-search anonymized/                                   # 3. read it
+```
+
+**One folder per participant, and the folder name is the participant ID.** That
+is the whole of what you tell the script; everything else it works out from the
+transcripts inside. `raw/P01/` becomes `anonymized/P01/`, and `P01` is what
+replaces that person's name wherever it appears. Sub-folders are walked and the
+shape is preserved, so whatever Zoom handed you can go in as it came — the tool
+reads those `GMT…` timestamps to lay [interrupted
+sessions](#interrupted-sessions) end to end.
+
+**The pass replaces speaker names, and nothing else.** In the attribution, in
+the body of the transcript, and in filenames. Places, employers, job titles and
+anyone mentioned who never speaks all survive untouched, on purpose — this is a
+first sweep over transcripts you are going to read anyway, not a
+de-identification pass, and it does not make a transcript safe to hand on
+unread. Whatever it could not resolve is printed under **REVIEW**, which is the
+part to actually read. There is more on what it refuses and what it only reports
+in [Anonymizing a set of interviews](#anonymizing-a-set-of-interviews).
+
+**Keep the two trees apart.** The script never writes into its input, and
+refuses to write into an output folder that already holds files unless you pass
+`--force`. Point the reader at `anonymized/` and the real names stay in one
+directory you can delete when the study is over.
+
+The reader will happily open `raw/` — a folder holding a transcript *is* a
+recording, and a folder of those is a library — so nothing stops you reading the
+un-anonymized copy. Which is the point of keeping them in separate trees with
+different names.
+
 ## Dependencies
 
 Tiered, so the part you use daily has the fewest ways to break:
