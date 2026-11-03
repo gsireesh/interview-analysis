@@ -248,12 +248,12 @@ body {
 
 /* Messages used to be a full-width bar above the transcript that pushed the
    text down and stayed there. A reading tool should not rearrange what you are
-   reading to say a file was saved, so they sit in the corner instead -- clear of
-   the transport bar in the reader, which is always there. */
+   reading to say a file was saved, so they sit in the corner instead -- just
+   below the top bar, so they never cover its controls. */
 .notices {
   position: fixed;
   right: 1.25rem;
-  bottom: 1.25rem;
+  top: calc(var(--topbar-h) + 0.75rem);
   z-index: 60;
   display: flex;
   flex-direction: column;
@@ -261,8 +261,6 @@ body {
   width: min(24rem, calc(100vw - 2.5rem));
   pointer-events: none;
 }
-
-body:not(.page) .notices { bottom: 4.75rem; }
 
 .toast {
   pointer-events: auto;
@@ -340,11 +338,11 @@ body:not(.page) .notices { bottom: 4.75rem; }
 
 @media (prefers-reduced-motion: no-preference) {
   .toast { animation: toast-in 180ms cubic-bezier(0.22, 1, 0.36, 1); }
-  .toast--going { opacity: 0; transform: translateY(4px); transition: opacity 160ms, transform 160ms; }
+  .toast--going { opacity: 0; transform: translateY(-4px); transition: opacity 160ms, transform 160ms; }
 }
 
 @keyframes toast-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(-8px); }
   to { opacity: 1; transform: none; }
 }
 

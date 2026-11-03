@@ -518,6 +518,7 @@ function onTierPointer(ctx, event) {
       ctx.notify(`Could not move that edge: ${error.message}`, { kind: "warn" });
     }
     renderAll(ctx);
+    document.getElementById("vc-pop")?.refresh?.();
   };
   bar.addEventListener("pointermove", move);
   bar.addEventListener("pointerup", up);
@@ -626,6 +627,12 @@ function openSpanPopup(ctx, span, bar) {
   pop.save = () => {
     saveNote();
     times.forEach(saveTime);
+  };
+  // A drag moves the span under the open pop-up; show its new times, or
+  // closing would save the old ones back.
+  pop.refresh = () => {
+    for (const input of times) input.value = clockText(live()[input.dataset.time]);
+    pop.querySelector(".vc-pop__head").innerHTML = head();
   };
   note.addEventListener("change", saveNote);
   pop.querySelector('[data-pop="delete"]').addEventListener("click", () => {
