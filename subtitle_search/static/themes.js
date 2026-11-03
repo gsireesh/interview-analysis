@@ -123,7 +123,7 @@ async function load() {
   ].filter(Boolean).join("  ·  ");
 
   // A link from the library opens one code in the matrix, once: a later reload
-  // for a mode switch or Refresh must not pull you back to it.
+  // for a mode switch or Sync must not pull you back to it.
   const url = new URL(location.href);
   const wanted = url.searchParams.get("tag");
   if (wanted) {
@@ -883,7 +883,7 @@ const reloadForMode = async () => {
 };
 ensureCoder()
   .then(() => {
-    mountCoderControls($("theme-toggle").parentElement, { onRefresh: reloadForMode });
+    mountCoderControls($("theme-toggle").parentElement, { onSync: reloadForMode });
     window.addEventListener("modechange", reloadForMode);
     window.addEventListener("coderchange", reloadForMode);
     loadThemes();

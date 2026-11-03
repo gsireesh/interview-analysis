@@ -10,7 +10,7 @@ exists in several copies: one in the shared ``common/`` folder, and one in each
 coder's own ``coders/<id>/common/`` folder. A change is only ever written to the
 changing coder's own copy, stamped with when and by whom; what everyone sees is
 the newest version of each record across all the copies. A deletion keeps the
-record, marked deleted, so it still wins over older copies. Refresh writes the
+record, marked deleted, so it still wins over older copies. Sync writes the
 combined result into the shared file, which is then a compact summary that could
 always be rebuilt from the coders' copies.
 
@@ -471,13 +471,13 @@ def _require_complete(registry, kind: str, coder: str | None = None) -> None:
     """
     if registry.failures:
         names = ", ".join(name for name, _ in registry.failures)
-        raise CodebookError(f"some recordings could not be read ({names}); wait for the folder to finish syncing and Refresh first")
+        raise CodebookError(f"some recordings could not be read ({names}); wait for the folder to finish syncing, then press Sync")
     for recording in registry.list():
         stores = (recording.store if kind == "text" else recording.video_codes).stores
         common = recording.common_quotes if kind == "text" else recording.common_spans
         own = stores.get(coder) if coder else None
         if common.incomplete or (own is not None and own.unreadable):
-            raise CodebookError(f"a file in {recording.title} could not be read; wait for it to finish syncing and Refresh first")
+            raise CodebookError(f"a file in {recording.title} could not be read; wait for it to finish syncing, then press Sync")
 
 
 def move_code(registry, kind: str, coder: str, code_id: str, *, final: bool, description=None,
@@ -619,7 +619,7 @@ def _hand_back(registry, recording, coder: str, item: dict) -> None:
             _claim(registry, recording, coder, item)
             return
         except (CodebookError, ValueError):
-            pass  # kept in returns, so it is not lost; the next Refresh tries again
+            pass  # kept in returns, so it is not lost; the next Sync tries again
     recording.returns.put(coder, item)
 
 
@@ -649,7 +649,7 @@ def _claim(registry, recording, coder: str, item: dict) -> None:
 
 
 def claim_returns(registry, coder: str) -> int:
-    """Take in whatever other coders returned to this coder; done on this coder's Refresh.
+    """Take in whatever other coders returned to this coder; done on this coder's Sync.
 
     An item that cannot be placed -- its words no longer resolve, its span now
     runs past the recording -- is left where it is rather than stopping the rest.

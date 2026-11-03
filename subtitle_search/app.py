@@ -103,7 +103,7 @@ def from_environment() -> FastAPI:
 def create_app(registry: RecordingRegistry) -> FastAPI:
     app = FastAPI(title="subtitle-search", docs_url=None, redoc_url=None)
     app.state.registry = registry
-    #: When the folder was last read: at startup, then on each Refresh.
+    #: When the folder was last read: at startup, then on each Sync.
     synced = {"at": datetime.now(timezone.utc).isoformat()}
 
     def require(recording_id: str) -> Recording:
@@ -157,8 +157,8 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"coder": coder}
 
-    @app.post("/api/refresh")
-    def refresh(request: Request) -> dict:
+    @app.post("/api/sync")
+    def sync(request: Request) -> dict:
         """Re-read what collaborators have synced in, take what was returned to you,
         and write the combined common records into the shared files."""
         registry.refresh()

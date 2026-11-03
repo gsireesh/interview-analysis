@@ -674,7 +674,7 @@ def test_refresh_shows_work_a_collaborator_synced_in(client, folder):
     )
 
     assert http.get(f"/api/recordings/{rid}").json()["highlights"] == []
-    assert http.post("/api/refresh").status_code == 200
+    assert http.post("/api/sync").status_code == 200
     assert [q["coder"] for q in http.get(f"/api/recordings/{rid}").json()["highlights"]] == ["rk-coder"]
     assert "RK" in [c["initials"] for c in http.get("/api/coders").json()["coders"]]
 
@@ -815,9 +815,9 @@ def test_anyone_may_edit_return_and_read_the_history_of_a_common_code(client):
 
     history = http.get(f"/api/library/video-codebook/{common_id}/history").json()["entries"]
     assert [e["action"] for e in history] == ["returned", "edited", "moved"]
-    # Test Coder's span waits for them; Refresh claims it.
+    # Test Coder's span waits for them; Sync claims it.
     assert [s["coder"] for s in http.get(f"/api/recordings/{rid}/video-codes").json()["spans"]] == []
-    http.post("/api/refresh")
+    http.post("/api/sync")
     assert [s["coder"] for s in http.get(f"/api/recordings/{rid}/video-codes").json()["spans"]] == [http.headers["X-Coder"]]
 
 
@@ -828,7 +828,7 @@ def test_refresh_pushes_and_updates_the_last_synced_time(client, folder):
 
     before = http.get("/api/common/status").json()
     assert "pending" not in before
-    http.post("/api/refresh")
+    http.post("/api/sync")
     after = http.get("/api/common/status").json()
     assert after["synced_at"] > before["synced_at"]
     assert (folder / "common" / "text_codebook.json").is_file()

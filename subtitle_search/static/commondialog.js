@@ -179,7 +179,7 @@ export async function returnToCoders(kind, code) {
   const noun = kind === "text" ? "quotes" : "spans";
   if (
     !confirm(
-      `Return ✓ ${code.name} to its coders? Each coder gets their own ${noun} back under an independent code called “${code.name}”, and the common code is removed. Coders other than you receive theirs when they next press Refresh.`
+      `Return ✓ ${code.name} to its coders? Each coder gets their own ${noun} back under an independent code called “${code.name}”, and the common code is removed. Coders other than you receive theirs when they next press Sync.`
     )
   )
     return null;

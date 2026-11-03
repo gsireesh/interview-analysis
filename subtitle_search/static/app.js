@@ -475,11 +475,11 @@ async function load() {
     refreshTextCodes(ctx).then(redrawForMode).catch(() => {});
   });
   mountCoderControls(ctx.el.themeToggle.parentElement, {
-    onRefresh: async () => {
+    onSync: async () => {
       ctx.onTranscriptChanged(await api(`/api/recordings/${ctx.recordingId}`));
       await refreshTextCodes(ctx);
       await reloadVideoCodes(ctx);
-      ctx.notify("Refreshed from the folder.");
+      ctx.notify("Synced with the folder.");
     },
   });
   renderList(ctx);

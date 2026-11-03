@@ -125,13 +125,13 @@ function openLogin() {
 /* ------------------------------------------------------- header controls -- */
 
 /**
- * Put the coder badge, the mode switch and Refresh into a page header.
+ * Put the coder badge, the mode switch and Sync into a page header.
  *
  * @param host       the header's actions container; controls go before #theme-toggle
  * @param withMode   whether this page follows the mode switch
- * @param onRefresh  called after the server has re-read the folder
+ * @param onSync     called after the server has synced with the folder
  */
-export function mountCoderControls(host, { withMode = true, onRefresh } = {}) {
+export function mountCoderControls(host, { withMode = true, onSync } = {}) {
   const bar = document.createElement("span");
   bar.className = "coderbar";
   bar.innerHTML =
@@ -142,7 +142,7 @@ export function mountCoderControls(host, { withMode = true, onRefresh } = {}) {
          </span>`
       : "") +
     `<span class="coderbar__pending" id="common-pending" hidden></span>
-     <button class="btn" type="button" id="refresh-btn" title="Read what collaborators have synced into the folder, and push your common changes">↻ Refresh</button>
+     <button class="btn" type="button" id="sync-btn" title="Read what collaborators have synced into the folder, and push your common changes">↻ Sync</button>
      <button class="coderbar__badge" type="button" id="coder-badge"></button>`;
   host.insertBefore(bar, host.querySelector("#theme-toggle"));
 
@@ -158,18 +158,18 @@ export function mountCoderControls(host, { withMode = true, onRefresh } = {}) {
     })
   );
 
-  $("refresh-btn").addEventListener("click", async (event) => {
+  $("sync-btn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
     try {
-      const result = await api("/api/refresh", { method: "POST" });
+      const result = await api("/api/sync", { method: "POST" });
       await loadCoders();
       syncBadge();
-      await onRefresh?.();
+      await onSync?.();
       await refreshPending();
       if (result.claimed) showStatus(`${result.claimed} returned item${result.claimed === 1 ? "" : "s"} added to your codes.`);
     } catch (error) {
-      showStatus(`Refresh failed: ${error.message}`);
+      showStatus(`Sync failed: ${error.message}`);
     } finally {
       button.disabled = false;
     }
@@ -195,7 +195,7 @@ export function coderTag(coderId) {
 
 /* ------------------------------------------------ common changes waiting -- */
 
-/** A short message beside Refresh, for what the last Refresh did or why it failed. */
+/** A short message beside Sync, for what the last Sync did or why it failed. */
 function showStatus(message) {
   const host = $("common-pending");
   if (!host) return;
@@ -215,7 +215,7 @@ export async function refreshPending() {
     host.textContent = parts.join(" · ");
     host.title = status.conflicts.length
       ? `The sync client made conflict copies: ${status.conflicts.join(", ")}. Compare them with the shared files by hand; nothing was lost, since every change is also in its author's own folder.`
-      : "When this tool last read the study folder. Press Refresh to read it again.";
+      : "When this tool last synced with the study folder. Press Sync to sync again.";
     host.hidden = false;
   } catch (_) {
     host.hidden = true;

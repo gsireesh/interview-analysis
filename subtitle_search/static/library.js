@@ -182,7 +182,7 @@ const loadLibrary = () =>
 // The library is the home page, so this is where a coder first says who they are.
 ensureCoder()
   .then(() => {
-    mountCoderControls($("theme-toggle").parentElement, { onRefresh: loadLibrary });
+    mountCoderControls($("theme-toggle").parentElement, { onSync: loadLibrary });
     window.addEventListener("modechange", loadLibrary);
     window.addEventListener("coderchange", loadLibrary);
     loadLibrary();

@@ -336,7 +336,7 @@ bindThemeToggle($("theme-toggle"));
 document.querySelectorAll("[data-kind]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.kind === state.kind)));
 ensureCoder()
   .then(() => {
-    mountCoderControls($("theme-toggle").parentElement, { onRefresh: loadCodes });
+    mountCoderControls($("theme-toggle").parentElement, { onSync: loadCodes });
     window.addEventListener("modechange", loadCodes);
     window.addEventListener("coderchange", loadCodes);
     return loadCodes();
