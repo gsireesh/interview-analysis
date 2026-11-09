@@ -1,19 +1,12 @@
 /* Saved quotes: the selection bar, the quote cards in the Text codes pane, and
  * their edits.
  *
- * Cards sit level with their transcript block and scroll with it. Every change
+ * Cards sit level with their quote in the transcript and scroll with it. Every change
  * writes to disk immediately, so there is no save step.
  */
 
 import { api, escapeHtml, formatTime } from "./util.js";
-import {
-  applyHighlights,
-  flashCue,
-  scrollToChunk,
-  selectionAnchors,
-  setCursor,
-} from "./transcript.js";
-import { seekAndPlay } from "./player.js";
+import { applyHighlights, selectionAnchors, setCursor } from "./transcript.js";
 import { mountTagFields } from "./tagfield.js";
 import { coderTag, initialsOf, isCommon, isMine, visibleNow } from "./coder.js";
 import { openMoveDialog, returnToCoders } from "./commondialog.js";
@@ -29,9 +22,12 @@ export function initHighlights(ctx) {
 
 /* --------------------------------------------------- cards beside the text -- */
 
-/* Each quote card sits level with the transcript block its quote starts in, and
- * the two panes scroll together, so the codes on a passage are read beside it.
- * Cards that would overlap are pushed down, never reordered. With the transcript
+/* Each quote card aims to sit level with the first line of its quote, and the two
+ * panes scroll together, so the codes on a passage are read beside it. Cards keep
+ * their time order and never overlap. The active quote's card (the one last
+ * clicked, here or in the transcript) sits exactly level with its line, with the
+ * cards before it packed upwards and the cards after it pushed down. With no
+ * active card, every card is pushed down from the top. With the transcript
  * collapsed there is nothing to line up with, and the cards fall back to a list. */
 const CARD_GAP = 6;
 
@@ -39,25 +35,74 @@ function levelQuotes(ctx) {
   const list = ctx.el.highlightList;
   const reader = ctx.el.reader;
   const cards = [...list.querySelectorAll(".quote")];
+  for (const card of cards) card.classList.toggle("quote--active", card.dataset.id === ctx.activeHighlightId);
   const canLevel = cards.length && reader.offsetParent && list.offsetParent && ctx.chunkEls?.length;
   list.classList.toggle("quotes-level--on", Boolean(canLevel));
   if (!canLevel) return;
 
   const readerTop = reader.getBoundingClientRect().top;
-  const listTop = list.getBoundingClientRect().top;
-  const shift = readerTop - listTop;
-  let floor = 0;
-  for (const card of cards) {
-    const highlight = ctx.highlights.find((h) => h.id === card.dataset.id);
-    const cue = highlight && ctx.el.chunks.querySelector(`[data-cue-id="${highlight.start_cue_id}"]`);
-    const block = cue?.closest(".chunk");
-    const want = block ? block.getBoundingClientRect().top - readerTop + reader.scrollTop + shift : floor;
-    const top = Math.max(want, floor);
-    card.style.top = `${top}px`;
-    floor = top + card.offsetHeight + CARD_GAP;
+  const shift = readerTop - list.getBoundingClientRect().top;
+  // A quote that is not painted (another quote covers its start, or its block is
+  // being corrected) falls back to the top of its block.
+  const wants = cards.map((card) => {
+    let anchor = ctx.el.chunks.querySelector(`mark[data-highlight-id="${card.dataset.id}"]`);
+    if (!anchor) {
+      const highlight = ctx.highlights.find((h) => h.id === card.dataset.id);
+      anchor = highlight && ctx.el.chunks.querySelector(`[data-cue-id="${highlight.start_cue_id}"]`)?.closest(".chunk");
+    }
+    return anchor ? anchor.getBoundingClientRect().top - readerTop + reader.scrollTop + shift : null;
+  });
+  const heights = cards.map((card) => card.offsetHeight);
+  // The lowest each card can sit while every card before it still fits above it.
+  const room = [];
+  heights.reduce((sum, height, i) => ((room[i] = sum), sum + height + CARD_GAP), 0);
+
+  const tops = [];
+  const active = cards.findIndex((card) => card.dataset.id === ctx.activeHighlightId);
+  if (active >= 0) {
+    tops[active] = Math.max(wants[active] ?? room[active], room[active]);
+    for (let i = active - 1; i >= 0; i -= 1) {
+      const ceiling = tops[i + 1] - CARD_GAP - heights[i];
+      tops[i] = Math.max(room[i], Math.min(wants[i] ?? ceiling, ceiling));
+    }
   }
-  list.style.setProperty("--level-height", `${Math.max(floor, reader.scrollHeight + shift)}px`);
+  for (let i = active + 1; i < cards.length; i += 1) {
+    const floor = i ? tops[i - 1] + heights[i - 1] + CARD_GAP : 0;
+    tops[i] = Math.max(wants[i] ?? floor, floor);
+  }
+  cards.forEach((card, i) => (card.style.top = `${tops[i]}px`));
+
+  const bottom = tops.at(-1) + heights.at(-1) + CARD_GAP;
+  list.style.setProperty("--level-height", `${Math.max(bottom, reader.scrollHeight + shift)}px`);
   list.scrollTop = reader.scrollTop;
+}
+
+/* Clicking a card makes its quote active. The card stays where it is on screen and
+ * the transcript scrolls so the quote's line comes up beside it. The player is
+ * cued to the quote, through the reading cursor (see onCursorMoved in app.js). */
+function lineUpCard(ctx, card, highlight) {
+  const list = ctx.el.highlightList;
+  const reader = ctx.el.reader;
+  const before = parseFloat(card.style.top) || 0;
+  ctx.activeHighlightId = highlight.id;
+  ctx.setMode("reading");
+  // The cards jump with the transcript here; sliding them as well would show them move twice.
+  list.classList.add("quotes-level--still");
+  applyHighlights(ctx); // Repaints the ring in the transcript and re-levels the cards.
+  if (list.classList.contains("quotes-level--on")) {
+    const from = reader.scrollTop;
+    reader.scrollTo({ top: from + (parseFloat(card.style.top) || 0) - before, behavior: "instant" });
+    list.scrollTop = reader.scrollTop;
+    // This scroll is for the card, so it must not move the reading cursor off the quote's block.
+    if (reader.scrollTop !== from) ctx.holdCursor = true;
+  }
+  void list.offsetHeight; // Apply the positions before the slide comes back.
+  list.classList.remove("quotes-level--still");
+
+  const index = ctx.chunks.findIndex((chunk) => chunk.cue_ids.includes(highlight.start_cue_id));
+  if (index < 0) return;
+  setCursor(ctx, index);
+  ctx.onCursorMoved?.(ctx.chunks[index]); // setCursor skips this when the cursor is already there.
 }
 
 function bindLevelling(ctx) {
@@ -531,12 +576,15 @@ function bindList(ctx) {
     const highlight = ctx.highlights.find((h) => h.id === card.dataset.id);
     if (!highlight) return;
     const action = event.target.closest("[data-action]")?.dataset.action;
-    // Another coder's quote is read-only; only jumping and copying apply.
-    if (!isMine(highlight) && action !== "jump" && action !== "copy") return;
+    // The quote text and the card's bare surface line the card up; its controls do not.
+    if (action === "jump" || !event.target.closest("button, a, input, textarea, .tagfield")) {
+      lineUpCard(ctx, card, highlight);
+      return;
+    }
+    // Another coder's quote is read-only; only copying applies.
+    if (!isMine(highlight) && action !== "copy") return;
 
-    if (action === "jump") {
-      jumpToHighlight(ctx, highlight);
-    } else if (action === "color") {
+    if (action === "color") {
       await patch(ctx, highlight, { color: event.target.dataset.color });
     } else if (action === "copy") {
       const speaker = highlight.speaker ? `${highlight.speaker} ` : "";
@@ -562,17 +610,6 @@ function bindList(ctx) {
 
   ctx.el.highlightList.addEventListener("change", commit);
   ctx.el.highlightList.addEventListener("focusout", commit);
-}
-
-function jumpToHighlight(ctx, highlight) {
-  const cue = ctx.cueById.get(highlight.start_cue_id);
-  if (!cue) return;
-  const chunk = ctx.chunks.find((c) => c.cue_ids.includes(cue.id));
-  ctx.activeHighlightId = highlight.id;
-  if (chunk) scrollToChunk(ctx, chunk.id);
-  flashCue(ctx, cue.id);
-  seekAndPlay(ctx, highlight.start_time);
-  applyHighlights(ctx);
 }
 
 async function patch(ctx, highlight, body, { rerender = true } = {}) {

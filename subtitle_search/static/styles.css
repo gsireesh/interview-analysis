@@ -804,6 +804,7 @@ mark.hl--noted::after {
 }
 
 .quote:hover { background: var(--paper-raised); }
+.quote--active { box-shadow: 0 0 0 2px var(--marker); }
 .quote--amber { border-left-color: var(--dot-amber); }
 .quote--teal { border-left-color: var(--dot-teal); }
 .quote--rose { border-left-color: var(--dot-rose); }
@@ -3154,6 +3155,11 @@ mark.hl--noted::after {
 .quotes-level { position: relative; }
 .quotes-level--on .quote { position: absolute; left: 0.5rem; right: 0.5rem; margin: 0; }
 .quotes-level--on::after { content: ""; display: block; height: var(--level-height, 0); }
+.quotes-level--on .quote { transition: top 150ms ease-out; }
+.quotes-level--still .quote { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .quotes-level--on .quote { transition: none; }
+}
 
 /* Transcript search matches, dropped down under the box. */
 .topbar__search { position: relative; }

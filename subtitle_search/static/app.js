@@ -538,6 +538,11 @@ function showDiagnostics(data, diagnostics, config) {
 let scrollQueued = false;
 
 ctx.el.reader.addEventListener("scroll", () => {
+  // Lining up a clicked quote card scrolls the transcript; the cursor stays on the quote.
+  if (ctx.holdCursor) {
+    ctx.holdCursor = false;
+    return;
+  }
   if (ctx.mode !== "reading" || scrollQueued) return;
   scrollQueued = true;
   requestAnimationFrame(() => {
@@ -555,8 +560,11 @@ for (const event of ["wheel", "touchmove"]) {
 let cueTimer;
 ctx.onCursorMoved = (chunk) => {
   if (!chunk || ctx.mode !== "reading") return;
+  // In the block holding the active quote, the quote is what you are looking at.
+  const active = ctx.highlights.find((h) => h.id === ctx.activeHighlightId);
+  const target = active && chunk.cue_ids.includes(active.start_cue_id) ? active.start_time : chunk.start;
   clearTimeout(cueTimer);
-  cueTimer = setTimeout(() => cue(ctx, chunk.start), 200);
+  cueTimer = setTimeout(() => cue(ctx, target), 200);
 };
 
 ctx.onTimeUpdate = (seconds) => {
@@ -590,6 +598,8 @@ ctx.el.chunks.addEventListener("click", (event) => {
   const fromTimestamp = Boolean(event.target.closest(".chunk__time"));
   ctx.setMode("reading");
   setCursor(ctx, index);
+  // setCursor does not cue when the cursor is already on this block.
+  if (mark) ctx.onCursorMoved(ctx.chunks[index]);
   if (fromTimestamp) seekAndPlay(ctx, ctx.chunks[index].start, { play: true });
 });
 
