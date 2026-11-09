@@ -561,6 +561,17 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             ]
         }
 
+    @app.get("/api/library/text-codebook/uncoded")
+    def uncoded_quotes() -> dict:
+        return {
+            "quotes": [
+                {**q, "ref": f"{r.id}:{q['id']}", "recording_id": r.id, "recording_title": r.title}
+                for r in registry.list()
+                for q in r.store.list()
+                if not (q.get("codes") or [])
+            ]
+        }
+
     @app.post("/api/library/text-codebook/{code_id}/applications/remove")
     def remove_text_code_applications(code_id: str, request: Request, payload: dict = Body(...)) -> dict:
         """Take the code off the chosen quotes. The quotes stay, with anything else on them."""

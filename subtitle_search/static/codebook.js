@@ -34,7 +34,11 @@ const state = {
   history: [],
   //: The themes, of those on screen in this mode, that hold the open code.
   themes: [],
+  //: Saved quotes with no code, of those on screen in this mode.
+  uncoded: [],
 };
+//: Stands in for a code id when the open page is the unlabelled quotes.
+const UNCODED = "uncoded";
 //: Your own codes and common ones can be edited here; other coders' are read-only.
 const editable = (code) => isMine(code) || isCommon(code);
 
@@ -55,7 +59,9 @@ async function loadCodes() {
   const book = await api(`/api/library/${state.kind}-codebook`);
   state.codes = book.codes;
   state.colors = book.colors;
-  if (state.codeId && !visibleNow(current() || {})) state.codeId = null;
+  state.uncoded = state.kind === "text" ? (await api("/api/library/text-codebook/uncoded")).quotes.filter(visibleNow) : [];
+  const gone = state.codeId === UNCODED ? state.kind !== "text" : !visibleNow(current() || {});
+  if (state.codeId && gone) state.codeId = null;
   renderList();
   await loadPage();
 }
@@ -103,13 +109,22 @@ function renderList() {
   ];
   el.meta.textContent = `${shown.length} ${noun()}${shown.length === 1 ? "" : "s"} · ${currentMode()}`;
 
+  const uncoded = state.kind === "text"
+    ? `<div class="cbook__row${state.codeId === UNCODED ? " cbook__row--on" : ""}">
+        <button class="cbook__pick" type="button" data-pick="${UNCODED}">
+          <i class="strip__swatch"></i>
+          <span class="cbook__name">Unlabelled quotes</span>
+          <span class="strip__count">${state.uncoded.length}</span>
+        </button>
+      </div>`
+    : "";
   if (!shown.length) {
-    el.list.innerHTML = `<p class="empty">No ${noun()}s yet. ${
+    el.list.innerHTML = `${uncoded}<p class="empty">No ${noun()}s yet. ${
       state.kind === "text" ? "Add one to a quote in the reader." : "Press i and o on a video to code a span."
     }</p>`;
     return;
   }
-  el.list.innerHTML = order
+  el.list.innerHTML = uncoded + order
     .filter((key) => groups.has(key))
     .map(
       (key) => `
@@ -136,7 +151,39 @@ function renderList() {
 
 /* ---------------------------------------------------------------- page -- */
 
+function renderUncoded() {
+  const recordings = new Set(state.uncoded.map((q) => q.recording_id));
+  const rows = [...state.uncoded]
+    .sort((a, b) => a.recording_title.localeCompare(b.recording_title) || a.start_time - b.start_time)
+    .map((q) => {
+      const link = `/reader?recording=${encodeURIComponent(q.recording_id)}&t=${q.start_time}`;
+      return `<tr>
+        <td>${esc(q.recording_title)}</td>
+        <td class="cbook__time">${formatTime(q.start_time)}</td>
+        <td><span class="cbook__quote">“${esc(q.text)}”</span>${q.speaker ? `<span class="cbook__speaker">${esc(q.speaker)}</span>` : ""}${q.note ? `<span class="cbook__speaker">Note: ${esc(q.note)}</span>` : ""}</td>
+        <td>${coderTag(q.coder)}</td>
+        <td><a class="cbook__jump" href="${link}" target="_blank" rel="noopener">▶ open</a></td>
+      </tr>`;
+    })
+    .join("");
+  el.page.innerHTML = `
+    <header class="cbook__head">
+      <i class="strip__swatch cbook__swatch"></i>
+      <div class="cbook__title">
+        <h2>Unlabelled quotes</h2>
+        <p>Saved quotes that have no code yet. Add a code to one in the reader and it leaves this list.</p>
+      </div>
+    </header>
+    <p class="cbook__facts"><b>${state.uncoded.length}</b> quote${state.uncoded.length === 1 ? "" : "s"} in <b>${recordings.size}</b> recording${recordings.size === 1 ? "" : "s"}</p>
+    ${
+      state.uncoded.length
+        ? `<table class="cbook__table"><thead><tr><th>Recording</th><th>Time</th><th>Quote</th><th>Coder</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+        : `<p class="empty">Every saved quote has a code.</p>`
+    }`;
+}
+
 function renderPage() {
+  if (state.codeId === UNCODED) return renderUncoded();
   const code = current();
   if (!code) {
     el.page.innerHTML = `<p class="empty">Choose a ${noun()} to see what it means and every place it is used.</p>`;

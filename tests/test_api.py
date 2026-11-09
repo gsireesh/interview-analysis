@@ -709,6 +709,20 @@ def test_a_text_codes_applications_span_every_recording_and_can_be_taken_off(cli
     assert http.delete(f"/api/library/text-codebook/{code['id']}").status_code == 200
 
 
+def test_uncoded_quotes_list_every_quote_without_a_code(client):
+    http, rid = client
+    code = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [code["id"]]})
+    bare = http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "note": "come back to this"}).json()["highlight"]
+
+    listed = http.get("/api/library/text-codebook/uncoded").json()["quotes"]
+    assert [(q["ref"], q["note"], q["coder"]) for q in listed] == [(f"{rid}:{bare['id']}", "come back to this", http.headers["X-Coder"])]
+    assert all("start_time" in q for q in listed)
+
+    http.patch(f"/api/recordings/{rid}/highlights/{bare['id']}", json={"codes": [code["id"]]})
+    assert http.get("/api/library/text-codebook/uncoded").json()["quotes"] == []
+
+
 def test_a_video_codes_applications_can_be_removed(client):
     http, rid = client
     code = http.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
