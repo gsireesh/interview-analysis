@@ -3092,6 +3092,7 @@ mark.hl--noted::after {
 }
 .who--common { color: var(--marker); font-family: var(--sans); font-weight: 700; }
 .coderbar__pending { font-size: 0.6875rem; color: var(--dot-rose); cursor: help; }
+#sync-btn:disabled { opacity: 0.45; cursor: default; }
 
 /* ------------------------------------------------------ move to common -- */
 .move { width: min(34rem, 100%); }

@@ -161,6 +161,7 @@ export function mountCoderControls(host, { withMode = true, onSync } = {}) {
   $("sync-btn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
+    showStatus("Syncing…");
     try {
       const result = await api("/api/sync", { method: "POST" });
       await loadCoders();
