@@ -9,11 +9,12 @@
  * Each of your own codes has a ⋯ menu: rename, describe, recolour, merge into
  * another of your codes, move to common, and delete once nothing uses it. A
  * common code's menu has History and Return to coders in place of the merge and
- * the move. Other coders' codes are read-only and have no menu.
+ * the move. An imported code's menu has only Move to common, since imported codes
+ * are not edited. Other coders' codes are read-only and have no menu.
  */
 
 import { escapeHtml } from "./util.js";
-import { coderTag, isCommon, isMine } from "./coder.js";
+import { coderTag, isCommon, isImported, isMine } from "./coder.js";
 
 //: Actions that act at once rather than opening a small form.
 const IMMEDIATE = new Set(["move", "return"]);
@@ -86,7 +87,7 @@ export function renderStrip(host, options) {
 
 function chip(code, filter) {
   const mine = isMine(code);
-  const editable = mine || isCommon(code);
+  const editable = mine || isCommon(code) || isImported(code);
   return (
     `<span class="strip__chip${filter === code.id ? " strip__chip--on" : ""}" title="${esc(code.description || code.name)}">` +
     `<button class="strip__pick" type="button" data-pick="${code.id}" aria-pressed="${filter === code.id}">` +
@@ -101,10 +102,16 @@ function chip(code, filter) {
 /** The code page of a code on the Codebook page. */
 export const codePageUrl = (kind, code) => `/codebook?kind=${kind}&code=${encodeURIComponent(code.id)}`;
 
-/** The ⋯ menu of your own code, or of a common one. Shared by the strip and the Codebook page. */
+/** The ⋯ menu of your own code, a common one, or an imported one. Shared by the strip and the Codebook page. */
 export function codeMenu(code, options) {
   const common = isCommon(code);
   const page = options.kind ? codePageUrl(options.kind, code) : null;
+  if (isImported(code)) {
+    return `<span class="strip__menu" role="menu">
+    ${page ? `<a role="menuitem" class="strip__menu-link" href="${page}">Open code page</a>` : ""}
+    <button type="button" role="menuitem" class="primary" data-act="move" data-id="${code.id}">Move to common…</button>
+  </span>`;
+  }
   return `<span class="strip__menu" role="menu">
     ${page ? `<a role="menuitem" class="strip__menu-link" href="${page}">Open code page</a>` : ""}
     <button type="button" role="menuitem" data-act="rename" data-id="${code.id}">Rename</button>

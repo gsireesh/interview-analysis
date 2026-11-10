@@ -23,8 +23,10 @@ from pathlib import Path
 from .editing import BACKUP_SUFFIX, backup_path, read_source
 from .codebook import TextCodebook
 from .coders import CODERS_DIRNAME, CoderDirectory
-from .common import COMMON, CommonCodebook, CommonQuotes, CommonSet, CommonSpans
+from .common import COMMON, IMPORTED, CommonCodebook, CommonQuotes, CommonSet, CommonSpans
 from .highlights import QUOTES_FILENAME, HighlightStore, SessionQuotes
+from .imported import CODEBOOK_NAME as IMPORTED_CODEBOOK_FILENAME
+from .imported import ImportedCodebook, ImportedSpans
 from .library import CommonThemeStore, ThemeStore
 from .mediainfo import container_duration
 from .models import Part, Transcript
@@ -197,6 +199,8 @@ class CoderBooks:
         #: The agreed codes, answered for the coder label "common".
         self.common_text = CommonCodebook(self.root, TEXT_CODEBOOK_FILENAME)
         self.common_video = CommonCodebook(self.root, VIDEO_CODEBOOK_FILENAME)
+        #: Video codes imported from study diaries, answered for the coder label "imported".
+        self.imported_video = ImportedCodebook(self.root, IMPORTED_CODEBOOK_FILENAME)
 
     def _folder(self, coder: str) -> Path:
         return self.root / CODERS_DIRNAME / coder
@@ -211,6 +215,8 @@ class CoderBooks:
     def video(self, coder: str) -> VideoCodebook:
         if coder == COMMON:
             return self.common_video
+        if coder == IMPORTED:
+            return self.imported_video
         if coder not in self._video:
             self._video[coder] = VideoCodebook(self._folder(coder) / VIDEO_CODEBOOK_FILENAME)
         return self._video[coder]
@@ -226,15 +232,17 @@ class CoderBooks:
         ]
 
     def all_video(self) -> list[tuple[str, dict]]:
+        """Every video code: the common ones, the imported ones, then each coder's."""
         return [(COMMON, code) for code in self.common_video.list()] + [
-            (c, code) for c in self.coders() for code in self.video(c).list()
-        ]
+            (IMPORTED, code) for code in self.imported_video.list()
+        ] + [(c, code) for c in self.coders() for code in self.video(c).list()]
 
     def reload(self) -> None:
         self._text.clear()
         self._video.clear()
         self.common_text.reload()
         self.common_video.reload()
+        self.imported_video.reload()
 
 
 def build_transcript(folder: Path, part_files: list[PartFiles]) -> tuple[Transcript, list[str]]:
@@ -363,6 +371,9 @@ class Recording:
         self.returns = CommonSet(self.folder, RETURNS_FILENAME)
         self.store = SessionQuotes(quote_stores, factory=self._quotes_for, common=self.common_quotes, returns=self.returns)
         self.store.transcript = self.transcript
+        #: Spans imported from the session's diary, listed among the coders' under "imported".
+        self.imported = ImportedSpans(self.folder, lambda: self.transcript.duration)
+        span_stores[IMPORTED] = self.imported
         self.video_codes = SessionVideoCodes(span_stores, factory=self._spans_for, common=self.common_spans)
 
     def _quotes_for(self, coder: str) -> HighlightStore:
@@ -484,6 +495,7 @@ class Recording:
             "highlights": self.store.list(),
             "highlights_stale": self.store.stale,
             "video_codes": self.video_codes.list(),
+            "imported": self.imported.status(),
             "legacy_files": self.legacy_files,
             # How much of the session has real timings rather than interpolated
             # ones, so the reader can be honest about which it is showing.
@@ -608,11 +620,13 @@ class RecordingRegistry:
     def _common_sets(self):
         yield self.books.common_text
         yield self.books.common_video
+        yield self.books.imported_video
         yield from self.common_themes.sets()
         for recording in self._recordings.values():
             yield from recording.common_quotes.sets()
             yield from recording.common_spans.sets()
             yield recording.returns
+            yield from recording.imported.sets()
 
     def push_common(self) -> None:
         """Write the combined common records into the shared files."""

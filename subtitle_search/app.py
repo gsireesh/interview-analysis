@@ -27,7 +27,7 @@ from .editing import (
 from .alignment import AlignmentError
 from .alignment import available as alignment_available
 from .codebook import CodebookError
-from .common import COMMON, ClashError, _record_history, claim_returns, history_for, move_code, return_code
+from .common import COMMON, IMPORTED, ClashError, _record_history, claim_returns, history_for, move_code, return_code
 from .coders import CoderError
 from .highlights import COLORS, HighlightError
 from .library import (
@@ -636,7 +636,11 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
         return text_codebook_state() if kind == "text" else video_codebook_state()
 
     def move(kind: str, code_id: str, request: Request, payload: dict, dry_run: bool) -> dict:
-        coder = own_code(request, pairs_for(kind), code_id)
+        # Imported codes belong to no coder, so anyone may move one; otherwise only the code's owner.
+        if owner_of(pairs_for(kind), code_id) == IMPORTED:
+            coder = current_coder(request)
+        else:
+            coder = own_code(request, pairs_for(kind), code_id)
         try:
             summary = move_code(
                 registry, kind, coder, code_id,
@@ -761,7 +765,34 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
 
     @app.get("/api/recordings/{recording_id}/video-codes")
     def list_video_codes(recording_id: str) -> dict:
-        return {"spans": require(recording_id).video_codes.list()}
+        recording = require(recording_id)
+        return {"spans": recording.video_codes.list(), "imported": recording.imported.status()}
+
+    # -- imported video codes: read from the session's diary, owned by no coder --
+
+    @app.post("/api/recordings/{recording_id}/imported/import")
+    def import_diary(recording_id: str, request: Request) -> dict:
+        """Import the recording's diary once; a recording already imported is left as it is."""
+        coder = current_coder(request)
+        recording = require(recording_id)
+        try:
+            status = recording.imported.import_diary(coder, registry.books.imported_video, recording.transcript)
+        except CodebookError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"the diary could not be read: {exc}") from exc
+        return {"imported": status, "spans": recording.video_codes.list()}
+
+    @app.put("/api/recordings/{recording_id}/imported/offset")
+    def set_imported_offset(recording_id: str, request: Request, payload: dict = Body(...)) -> dict:
+        """Shift every imported span of the recording, for everyone."""
+        coder = current_coder(request)
+        recording = require(recording_id)
+        try:
+            recording.imported.set_offset(coder, payload.get("seconds"))
+        except CodebookError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"imported": recording.imported.status(), "spans": recording.video_codes.list()}
 
     @app.post("/api/recordings/{recording_id}/video-codes", status_code=201)
     def add_video_span(recording_id: str, request: Request, payload: dict = Body(...)) -> dict:
@@ -875,12 +906,13 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
         return {"codes": code_items(registry, *view(request))}
 
     def code_refs(owner: str) -> set[str]:
-        """What a theme of this owner may hold: common codes, plus the owner's own."""
+        """What a theme of this owner may hold: common codes, plus the owner's own and the imported ones."""
         refs = {f"text:{c['id']}" for c in registry.books.common_text.list()}
         refs |= {f"video:{c['id']}" for c in registry.books.common_video.list()}
         if owner != COMMON:
             refs |= {f"text:{c['id']}" for c in registry.books.text(owner).list()}
             refs |= {f"video:{c['id']}" for c in registry.books.video(owner).list()}
+            refs |= {f"video:{c['id']}" for c in registry.books.imported_video.list()}
         return refs
 
     def codebooks_readable(owner: str) -> bool:
@@ -927,6 +959,9 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             # themes drop only codes known to be deleted.
             if known_coder and owner in (coder, COMMON) and not store.unreadable and codebooks_readable(owner):
                 if owner == coder:
+                    # An imported code moved to common by someone else: follow it before pruning.
+                    for old, new in registry.books.imported_video.moved().items():
+                        store.replace_ref(f"video:{old}", f"video:{new}")
                     store.prune(code_refs(owner))
                 else:
                     present = {c["ref"] for c in store.cards()} | {r for t in store.list() for r in t.get("refs", [])}

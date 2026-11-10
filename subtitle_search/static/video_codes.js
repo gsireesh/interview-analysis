@@ -1,9 +1,14 @@
 /* Video codes: named spans of the recording's time.
  *
  * Kept apart from text codes throughout; spans never paint the text. They show
- * as code rows under the video, one row per coder (common, you, then others in
- * collaborative mode), over a zoomable window that follows the playhead, and in
- * the List tab.
+ * as code rows under the video, one row per coder (imported, common, you, then
+ * others in collaborative mode), over a zoomable window that follows the
+ * playhead, and in the List tab.
+ *
+ * Imported spans come from the study session's diary (see imported.py). They
+ * belong to no coder and are read-only: a coder copies one into their own row to
+ * change it. Their row carries the import's status and the shared offset that
+ * lines it up with the video.
  *
  * Marking is `i` for in and `o` for out, at the playhead. Each coder has their
  * own video codebook; a code can carry its own key, which closes an open span
@@ -12,7 +17,7 @@
 
 import { $, api, escapeHtml, formatTime, recall, remember } from "./util.js";
 import { seek } from "./player.js";
-import { coderTag, currentCoder, initialsOf, isCommon, isMine, nameOf, visibleNow } from "./coder.js";
+import { coderTag, currentCoder, initialsOf, isCommon, isImported, isMine, nameOf, visibleNow } from "./coder.js";
 import { openMoveDialog, returnToCoders } from "./commondialog.js";
 import { renderStrip } from "./codestrip.js";
 
@@ -29,6 +34,7 @@ export function initVideoCodes(ctx) {
     colors: [],
     reserved: [],
     spans: ctx.data.video_codes || [],
+    imported: ctx.data.imported || { status: "none", offset: 0 },
     pending: null,     // session time of an `i` not yet closed by `o`
     out: null,         // session time of that `o`, while its code is being chosen
     filter: null,      // code id the list is narrowed to
@@ -50,6 +56,10 @@ export function initVideoCodes(ctx) {
   ctx.el.panelVideoCodes.addEventListener("click", (event) => onPanelClick(ctx, event));
   ctx.el.panelVideoCodes.addEventListener("change", (event) => onPanelChange(ctx, event));
   ctx.el.vcTiers?.addEventListener("pointerdown", (event) => onTierPointer(ctx, event));
+  ctx.el.vcTiers?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-imported]");
+    if (button) openImportPopup(ctx, button);
+  });
   document.addEventListener("pointerdown", (event) => {
     if (!event.target.closest("#vc-pop, .vc-bar")) closeSpanPopup();
   });
@@ -90,6 +100,21 @@ export function initVideoCodes(ctx) {
   refreshCodebook(ctx).catch((error) =>
     ctx.notify(`Could not load the video codebook: ${error.message}`, { kind: "warn" })
   );
+  importPending(ctx);
+}
+
+/** Import the recording's diary if one is waiting; the first coder to open the recording does it, for everyone. */
+async function importPending(ctx) {
+  if (ctx.vc.imported.status !== "pending" || !currentCoder()) return;
+  try {
+    const result = await api(`/api/recordings/${ctx.recordingId}/imported/import`, { method: "POST" });
+    ctx.vc.imported = result.imported;
+    ctx.vc.spans = result.spans;
+    await refreshCodebook(ctx);
+    window.dispatchEvent(new CustomEvent("commonchange"));
+  } catch (error) {
+    ctx.notify(`Could not import the diary: ${error.message}`, { kind: "warn" });
+  }
 }
 
 /**
@@ -100,9 +125,11 @@ export function initVideoCodes(ctx) {
  */
 export async function reloadVideoCodes(ctx) {
   if (!ctx.vc || ctx.vc.pending != null || !ctx.el.vcPicker.hidden) return;
-  const { spans } = await api(`/api/recordings/${ctx.recordingId}/video-codes`);
+  const { spans, imported } = await api(`/api/recordings/${ctx.recordingId}/video-codes`);
   ctx.vc.spans = spans;
+  ctx.vc.imported = imported;
   await refreshCodebook(ctx);
+  importPending(ctx);
 }
 
 async function refreshCodebook(ctx, state) {
@@ -370,8 +397,8 @@ function stack(spans) {
 
 /* ---------------------------------------------------------- code rows -- */
 
-/* One row per coder -- common first when it has anything, then you, then other
- * coders in collaborative mode -- over a stretch of the recording that follows
+/* One row per coder -- imported first when the recording has a diary, common when
+ * it has anything, then you, then other coders in collaborative mode -- over a stretch of the recording that follows
  * the playhead. A span too short for its name is cut off with an ellipsis; hover
  * shows the code, the coder and the times. Click a span to go to it, or empty
  * space to go to that moment; drag the ends of your own spans to move them. */
@@ -403,10 +430,17 @@ function tickStep(win) {
 function coderRows(ctx) {
   const spans = shownSpans(ctx);
   const rows = [];
+  if (ctx.vc.imported.status !== "none") {
+    const warn = ctx.vc.imported.status === "ambiguous" || ctx.vc.imported.anchor === "first_event" ? " ⚠" : "";
+    rows.push({
+      label: `<button type="button" class="tier__imported" data-imported title="Import status and offset">${coderTag("imported")} Imported${warn}</button>`,
+      spans: spans.filter(isImported),
+    });
+  }
   const common = spans.filter(isCommon);
   if (common.length) rows.push({ label: `<em class="who who--common">✓</em> Common`, spans: common });
   rows.push({ label: `<em class="who">${esc(initialsOf(currentCoder()?.id))}</em> You`, spans: spans.filter(isMine) });
-  const others = [...new Set(spans.filter((s) => !isMine(s) && !isCommon(s)).map((s) => s.coder))];
+  const others = [...new Set(spans.filter((s) => !isMine(s) && !isCommon(s) && !isImported(s)).map((s) => s.coder))];
   for (const coder of others.sort((a, b) => nameOf(a).localeCompare(nameOf(b)))) {
     rows.push({ label: `${coderTag(coder)} ${esc(nameOf(coder))}`, spans: spans.filter((s) => s.coder === coder) });
   }
@@ -580,7 +614,8 @@ function openSpanPopup(ctx, span, bar) {
         .join("")}</select>
       <textarea class="quote__note" rows="2" placeholder="Note">${esc(span.note || "")}</textarea>
       <button class="btn btn--danger" type="button" data-pop="delete">Delete</button>`
-    : span.note ? `<p class="quote__note-text">${esc(span.note)}</p>` : "");
+    : (span.note ? `<p class="quote__note-text">${esc(span.note)}</p>` : "") +
+      (isImported(span) ? `<button class="btn" type="button" data-pop="copy">Copy to my row</button>` : ""));
   document.body.appendChild(pop);
 
   const r = bar.getBoundingClientRect();
@@ -588,7 +623,13 @@ function openSpanPopup(ctx, span, bar) {
   const below = r.bottom + 4;
   pop.style.top = `${below + pop.offsetHeight > innerHeight ? Math.max(8, r.top - pop.offsetHeight - 4) : below}px`;
 
-  if (!own) return;
+  if (!own) {
+    pop.querySelector('[data-pop="copy"]')?.addEventListener("click", () => {
+      closeSpanPopup();
+      copySpan(ctx, live());
+    });
+    return;
+  }
   pop.querySelector("select").addEventListener("change", async (event) => {
     await patchSpan(ctx, span.id, { code_id: event.target.value });
     pop.querySelector(".vc-pop__head").innerHTML = head();
@@ -639,6 +680,125 @@ function openSpanPopup(ctx, span, bar) {
     pop.save = null;
     closeSpanPopup();
     removeSpan(ctx, span);
+  });
+}
+
+/** Copy an imported span into your own row, under your code of the same name (made if you have none). */
+async function copySpan(ctx, span) {
+  const code = codeOf(ctx, span.code_id);
+  if (!code) return;
+  try {
+    let mine = myCodes(ctx).find((c) => c.name.toLowerCase() === code.name.toLowerCase());
+    if (!mine) {
+      const made = await api("/api/library/video-codebook", {
+        method: "POST",
+        body: { name: code.name, color: code.color, description: code.description || "" },
+      });
+      mine = made.code;
+      await refreshCodebook(ctx, made);
+    }
+    const { span: saved } = await api(`/api/recordings/${ctx.recordingId}/video-codes`, {
+      method: "POST",
+      body: { code_id: mine.id, start: span.start, end: span.end, note: span.note || "" },
+    });
+    ctx.vc.spans.push(saved);
+    mine.span_count = (mine.span_count || 0) + 1;
+    renderAll(ctx);
+    ctx.notify(`Copied ${code.name} · ${formatTime(saved.start)}–${formatTime(saved.end)} to your row.`);
+  } catch (error) {
+    ctx.notify(`Could not copy the span: ${error.message}`, { kind: "warn" });
+  }
+}
+
+/* ------------------------------------------------------ import pop-up -- */
+
+// The Imported row's label opens this: what the import brought in and left out,
+// and the offset that shifts the whole row, for everyone.
+
+const SKIP_REASONS = {
+  outside_recording: "outside the recording",
+  no_timestamp: "without a timestamp",
+  duplicate: "repeated",
+  unreadable: "unreadable",
+};
+
+function importSummary(info) {
+  if (info.status === "pending") return "A diary is waiting to be imported.";
+  if (info.status === "ambiguous") return "This folder holds several *_diary.jsonl files, so none was imported. Leave one.";
+  const skipped = Object.entries(info.skipped || {}).filter(([, n]) => n);
+  const lines = [`${info.imported} span${info.imported === 1 ? "" : "s"} from ${esc(info.file || "the diary")}.`];
+  if (skipped.length) {
+    const total = skipped.reduce((sum, [, n]) => sum + n, 0);
+    lines.push(`${total} event${total === 1 ? "" : "s"} left out: ${skipped.map(([why, n]) => `${n} ${SKIP_REASONS[why] || why}`).join(", ")}.`);
+  }
+  if (info.hidden) lines.push(`${info.hidden} span${info.hidden === 1 ? "" : "s"} fall outside the recording at this offset.`);
+  if (info.anchor === "first_event") lines.push("The recording's files carry no start time, so the first event was placed at 0:00. Line it up with the offset.");
+  return lines.map((line) => `<p>${line}</p>`).join("");
+}
+
+/** An offset as the pop-up shows it: signed m:ss.t. */
+const offsetText = (seconds) => `${seconds < 0 ? "−" : "+"}${clockText(Math.abs(seconds))}`;
+
+/** Read a signed m:ss.t or seconds; null if it is not one. */
+function parseOffset(text) {
+  const match = text.trim().replace("−", "-").match(/^([+-]?)(.*)$/);
+  const value = parseClock(match[2]);
+  return value === null ? null : match[1] === "-" ? -value : value;
+}
+
+function openImportPopup(ctx, anchor) {
+  closeSpanPopup();
+  const pop = document.createElement("div");
+  pop.id = "vc-pop";
+  pop.className = "vc-pop vc-pop--imported";
+  pop.setAttribute("role", "dialog");
+  pop.setAttribute("aria-label", "Imported video codes");
+  const draw = () => {
+    const info = ctx.vc.imported;
+    pop.innerHTML = `<div class="vc-pop__head">${coderTag("imported")} <b>Imported</b></div>
+      <div class="vc-pop__status">${importSummary(info)}</div>` +
+      (info.status === "imported"
+        ? `<div class="vc-pop__offset">
+            <label>Offset <input type="text" data-offset value="${offsetText(info.offset || 0)}" spellcheck="false"></label>
+            <span class="vc-pop__nudges">${[-1, -0.1, 0.1, 1].map((n) => `<button type="button" class="btn" data-nudge="${n}">${n < 0 ? "−" : "+"}${Math.abs(n)}s</button>`).join("")}</span>
+          </div>
+          <p class="vc-pop__hint">Shifts the imported row for everyone. Copies and common spans keep their times.</p>`
+        : "");
+  };
+  draw();
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8))}px`;
+  pop.style.top = `${r.bottom + 4 + pop.offsetHeight > innerHeight ? Math.max(8, r.top - pop.offsetHeight - 4) : r.bottom + 4}px`;
+
+  const save = async (seconds) => {
+    try {
+      const result = await api(`/api/recordings/${ctx.recordingId}/imported/offset`, { method: "PUT", body: { seconds } });
+      ctx.vc.imported = result.imported;
+      ctx.vc.spans = result.spans;
+      renderAll(ctx);
+      window.dispatchEvent(new CustomEvent("commonchange"));
+    } catch (error) {
+      ctx.notify(`Could not change the offset: ${error.message}`, { kind: "warn" });
+    }
+    draw();
+  };
+  pop.addEventListener("click", (event) => {
+    const nudge = event.target.closest("[data-nudge]");
+    if (nudge) save(Math.round(((ctx.vc.imported.offset || 0) + Number(nudge.dataset.nudge)) * 1000) / 1000);
+  });
+  pop.addEventListener("change", (event) => {
+    if (!event.target.matches("[data-offset]")) return;
+    const value = parseOffset(event.target.value);
+    if (value === null) {
+      ctx.notify("Type the offset as seconds or m:ss.t, with − to move the row earlier.", { kind: "warn" });
+      draw();
+      return;
+    }
+    save(value);
+  });
+  pop.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target.matches("[data-offset]")) event.target.blur();
   });
 }
 

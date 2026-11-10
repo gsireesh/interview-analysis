@@ -6,7 +6,7 @@
  * it. The choice is remembered, and every write carries it (util.api).
  *
  * The mode switch decides whose quotes and spans are shown. Independent shows
- * your own and common ones, so you code without seeing anyone else's decisions.
+ * your own, common and imported ones, so you code without seeing anyone else's decisions.
  * Collaborative shows everyone's, labelled with their initials, and other
  * people's work is read-only. Switching fires a `modechange` event on window so
  * each view redraws without a reload.
@@ -24,12 +24,15 @@ export const isMine = (item) => Boolean(state.me) && item?.coder === state.me.id
 //: What the server calls agreed codes and their quotes and spans, wherever an item names its coder.
 export const COMMON = "common";
 export const isCommon = (item) => item?.coder === COMMON;
-/** Whether an item belongs on screen in the current mode. Common work is agreed, so always. */
-export const visibleNow = (item) => currentMode() === "collaborative" || isMine(item) || isCommon(item);
+//: What the server calls codes and spans imported from a study diary, which belong to no coder.
+export const IMPORTED = "imported";
+export const isImported = (item) => item?.coder === IMPORTED;
+/** Whether an item belongs on screen in the current mode. Common and imported work is everyone's, so always. */
+export const visibleNow = (item) => currentMode() === "collaborative" || isMine(item) || isCommon(item) || isImported(item);
 export const initialsOf = (coderId) =>
-  coderId === COMMON ? "✓" : state.coders.find((c) => c.id === coderId)?.initials || "?";
+  coderId === COMMON ? "✓" : coderId === IMPORTED ? "⇣" : state.coders.find((c) => c.id === coderId)?.initials || "?";
 export const nameOf = (coderId) =>
-  coderId === COMMON ? "Common" : state.coders.find((c) => c.id === coderId)?.name || "Unknown coder";
+  coderId === COMMON ? "Common" : coderId === IMPORTED ? "Imported" : state.coders.find((c) => c.id === coderId)?.name || "Unknown coder";
 
 export async function loadCoders() {
   state.coders = (await api("/api/coders")).coders;
@@ -189,9 +192,10 @@ function syncBadge() {
   badge.title = `Coding as ${state.me.name}. Click to switch.`;
 }
 
-/** A small label for another coder's work: their initials, full name on hover; ✓ for common. */
+/** A small label for another coder's work: their initials, full name on hover; ✓ for common, ⇣ for imported. */
 export function coderTag(coderId) {
-  return `<em class="who${coderId === COMMON ? " who--common" : ""}" title="${escapeHtml(nameOf(coderId))}">${escapeHtml(initialsOf(coderId))}</em>`;
+  const kind = coderId === COMMON ? " who--common" : coderId === IMPORTED ? " who--imported" : "";
+  return `<em class="who${kind}" title="${escapeHtml(nameOf(coderId))}">${escapeHtml(initialsOf(coderId))}</em>`;
 }
 
 /* ------------------------------------------------ common changes waiting -- */

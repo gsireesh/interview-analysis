@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .common import COMMON
+from .common import COMMON, IMPORTED
 
 SCHEMA_VERSION = 2
 
@@ -225,7 +225,7 @@ def all_quotes(registry, mode: str | None = None, coder: str | None = None) -> l
     mode, what that mode shows: the caller's own (independent) or everyone's,
     their codes labelled with initials (collaborative).
     """
-    initials = {**({c["id"]: c["initials"] for c in registry.coders.list()} if registry.coders else {}), COMMON: "✓"}
+    initials = {**({c["id"]: c["initials"] for c in registry.coders.list()} if registry.coders else {}), COMMON: "✓", IMPORTED: "imported"}
     quotes: list[dict] = []
     for recording in registry.list():
         for highlight in recording.store.list():
@@ -253,7 +253,7 @@ def code_items(registry, mode: str | None = None, coder: str | None = None) -> l
     is, how many quotes or spans carry it and in which recordings, and those
     applications themselves, so a card can open to show its evidence and play it.
     """
-    initials = {**({c["id"]: c["initials"] for c in registry.coders.list()} if registry.coders else {}), COMMON: "✓"}
+    initials = {**({c["id"]: c["initials"] for c in registry.coders.list()} if registry.coders else {}), COMMON: "✓", IMPORTED: "imported"}
     uses: dict[str, list[dict]] = {}
     for recording in registry.list():
         for quote in recording.store.list():
@@ -273,7 +273,7 @@ def code_items(registry, mode: str | None = None, coder: str | None = None) -> l
     items = []
     for kind, pairs in (("text", registry.books.all_text()), ("video", registry.books.all_video())):
         for owner, code in pairs:
-            if mode == "independent" and owner not in (coder, COMMON):
+            if mode == "independent" and owner not in (coder, COMMON, IMPORTED):
                 continue
             ref = f"{kind}:{code['id']}"
             # By speaker, then time; uncredited quotes and video spans last.
@@ -294,11 +294,11 @@ def code_packing_order(items: list[dict]) -> dict[str, tuple]:
 
 def video_index(registry, mode: str | None = None, coder: str | None = None) -> list[dict]:
     """Video codes with their span counts per recording, as the mode shows them."""
-    initials = {**({c["id"]: c["initials"] for c in registry.coders.list()} if registry.coders else {}), COMMON: "✓"}
+    initials = {**({c["id"]: c["initials"] for c in registry.coders.list()} if registry.coders else {}), COMMON: "✓", IMPORTED: "imported"}
     entries: dict[str, dict] = {}
     for recording in registry.list():
         for span in recording.video_codes.list():
-            if mode == "independent" and span.get("coder") not in (coder, COMMON):
+            if mode == "independent" and span.get("coder") not in (coder, COMMON, IMPORTED):
                 continue
             code = registry.books.video(span["coder"]).get(span["code_id"])
             if code is None:

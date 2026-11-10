@@ -3,20 +3,21 @@
  * The reader shows one recording; a codebook covers them all, so reviewing a code
  * -- reading everything filed under it, cleaning it up before it is agreed --
  * happens here. Text codes and video codes are separate codebooks and are shown
- * one at a time. The list on the left is Common, then yours, plus every other
- * coder's in collaborative mode. The page on the right is one code: its
+ * one at a time. The list on the left is Imported, Common, then yours, plus every
+ * other coder's in collaborative mode. The page on the right is one code: its
  * description, the themes holding it, and each quote or span that carries it,
  * with a link to that moment.
  *
  * Your own and common codes are edited with the same ⋯ menu as in the reader,
  * and their uses removed in bulk: for a text code that takes the code off the
  * chosen quotes; a span carries one code, so removing it deletes the span.
- * Common codes also show their History. Other coders' codes are read-only.
+ * Common codes also show their History. Imported codes, read from study diaries,
+ * can only be moved to common. Other coders' codes are read-only.
  */
 
 import { $, api, escapeHtml, formatTime } from "./util.js";
 import { applyStoredTheme, bindThemeToggle, notify } from "./chrome.js";
-import { COMMON, coderTag, currentMode, ensureCoder, isCommon, isMine, mountCoderControls, nameOf, visibleNow } from "./coder.js";
+import { COMMON, coderTag, currentMode, ensureCoder, isCommon, isImported, isMine, mountCoderControls, nameOf, visibleNow } from "./coder.js";
 import { codeEditor, codeMenu } from "./codestrip.js";
 import { openMoveDialog, returnToCoders } from "./commondialog.js";
 
@@ -38,12 +39,14 @@ const state = {
   uncoded: [],
 };
 //: The list group a code or quote falls in: Common, yours, or another coder's.
-const groupOf = (item) => (isCommon(item) ? "__common" : isMine(item) ? "__mine" : item.coder);
+const groupOf = (item) => (isCommon(item) ? "__common" : isImported(item) ? "__imported" : isMine(item) ? "__mine" : item.coder);
 //: Stands in for a code id when the open page is one group's unlabelled quotes.
 const UNCODED = "uncoded:";
 const uncodedGroup = () => (state.codeId?.startsWith(UNCODED) ? state.codeId.slice(UNCODED.length) : null);
 //: Your own codes and common ones can be edited here; other coders' are read-only.
 const editable = (code) => isMine(code) || isCommon(code);
+//: Whether a code has a ⋯ menu: an editable one, or an imported one, whose menu only moves it to common.
+const hasMenu = (code) => editable(code) || isImported(code);
 
 const el = { meta: $("meta"), notices: $("notices"), list: $("code-list"), page: $("code-page") };
 const noun = () => (state.kind === "text" ? "text code" : "video code");
@@ -114,6 +117,7 @@ function renderList() {
   if (state.kind === "text") uncodedCount.set("__mine", uncodedCount.get("__mine") || 0);
   for (const key of uncodedCount.keys()) if (!groups.has(key)) groups.set(key, []);
   const order = [
+    "__imported",
     "__common",
     "__mine",
     ...[...groups.keys()].filter((k) => !k.startsWith("__")).sort((a, b) => nameOf(a).localeCompare(nameOf(b))),
@@ -139,7 +143,7 @@ function renderList() {
     .filter((key) => groups.has(key))
     .map(
       (key) => `
-      <div class="cbook__group">${key === "__common" ? "Common ✓" : key === "__mine" ? "Yours · not yet common" : esc(nameOf(key))}</div>
+      <div class="cbook__group">${key === "__common" ? "Common ✓" : key === "__imported" ? "Imported ⇣" : key === "__mine" ? "Yours · not yet common" : esc(nameOf(key))}</div>
       ${uncodedRow(key)}
       ${groups
         .get(key)
@@ -153,7 +157,7 @@ function renderList() {
             <span class="strip__count">${uses(code)}</span>
             ${code.description ? `<span class="cbook__desc">${esc(code.description)}</span>` : ""}
           </button>
-          ${editable(code) ? `<button class="strip__menu-btn cbook__more" type="button" data-menu="${code.id}" aria-label="Actions for ${esc(code.name)}" aria-haspopup="menu">⋯</button>` : ""}
+          ${hasMenu(code) ? `<button class="strip__menu-btn cbook__more" type="button" data-menu="${code.id}" aria-label="Actions for ${esc(code.name)}" aria-haspopup="menu">⋯</button>` : ""}
         </div>`
         )
         .join("")}`
@@ -231,7 +235,7 @@ function renderPage() {
         <h2>${esc(code.name)} ${mine ? "" : coderTag(code.coder)}</h2>
         <p>${code.description ? esc(code.description) : `<span class="cbook__none">No description yet.</span>`}</p>
       </div>
-      ${mine ? `<span class="cbook__head-menu"><button class="strip__menu-btn cbook__more" type="button" data-menu="${code.id}" aria-label="Actions for ${esc(code.name)}" aria-haspopup="menu">⋯</button></span>` : `<span class="cbook__readonly">${esc(nameOf(code.coder))}'s code · read-only</span>`}
+      ${hasMenu(code) ? `<span class="cbook__head-menu"><button class="strip__menu-btn cbook__more" type="button" data-menu="${code.id}" aria-label="Actions for ${esc(code.name)}" aria-haspopup="menu">⋯</button></span>` : `<span class="cbook__readonly">${esc(nameOf(code.coder))}'s code · read-only</span>`}
     </header>
     ${state.editing ? codeEditor(state.editing, { colors: state.colors, withKeys: state.kind === "video", noun: noun() }, state.codes.map((c) => ({ ...c, total: uses(c) }))) : ""}
     <p class="cbook__facts"><b>${state.applications.length}</b> ${state.kind === "text" ? "quote" : "span"}${state.applications.length === 1 ? "" : "s"} in <b>${recordings.size}</b> recording${recordings.size === 1 ? "" : "s"}</p>

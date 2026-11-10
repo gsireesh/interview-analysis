@@ -33,6 +33,10 @@ SCHEMA_VERSION = 1
 #: The coder label common items carry, wherever an item names its coder.
 COMMON = "common"
 
+#: The owner of codes and spans imported from a study diary (see ``imported.py``),
+#: which belong to no coder and are written by whichever coder's tool acts.
+IMPORTED = "imported"
+
 
 def stamp() -> str:
     """A change time fine enough that two quick edits never tie."""
@@ -388,25 +392,27 @@ class CommonSpans:
         parts = _live(self.parts, "span", span_id)
         return self._view(span, parts) if span and parts else None
 
-    def add(self, coder: str, source: dict, code_id: str) -> bool:
+    def add(self, coder: str, source: dict, code_id: str, contributor: str | None = None) -> bool:
         """Record ``coder``'s span as an application of common ``code_id``.
 
         A live common span of that code whose ends are each within half a second
         is the same application: the coder is added to it, and it counts as an
-        exact duplicate.
+        exact duplicate. ``contributor`` names whose span it was when that is not
+        the writing coder: an imported span, moved by whoever moved its code.
         """
+        writer, coder = coder, contributor or coder
         match = next((s for s in self.list() if s["code_id"] == code_id
                       and abs(s["start"] - source["start"]) <= SPAN_TOLERANCE
                       and abs(s["end"] - source["end"]) <= SPAN_TOLERANCE), None)
         if match is None:
             span_id = _uuid.uuid4().hex[:12]
-            self.spans.put(coder, {"id": span_id, "code_id": code_id, "start": source["start"], "end": source["end"]})
+            self.spans.put(writer, {"id": span_id, "code_id": code_id, "start": source["start"], "end": source["end"]})
         else:
             span_id = match["id"]
         part_id = f"{span_id}:{coder}:{source['id']}"
         if self.parts.get(part_id) is None:
-            self.parts.put(coder, {"id": part_id, "span": span_id, "coder": coder, "span_id": source["id"],
-                                   "start": source["start"], "end": source["end"], "note": source.get("note", "")})
+            self.parts.put(writer, {"id": part_id, "span": span_id, "coder": coder, "span_id": source["id"],
+                                    "start": source["start"], "end": source["end"], "note": source.get("note", "")})
         return match is not None and any(p["id"] != part_id for p in match["parts"])
 
     def remove(self, actor: str, span_id: str) -> list[dict]:
@@ -487,14 +493,19 @@ def move_code(registry, kind: str, coder: str, code_id: str, *, final: bool, des
     Common records are written before the coder's own files are cleaned up, and
     a contribution already recorded is not recorded twice, so a move that was
     interrupted is finished by simply moving again.
+
+    An imported video code is moved the same way by whichever coder asks: its
+    spans are contributed as ``IMPORTED``, and the code leaves a marker naming
+    the common code so every coder's themes can follow it.
     """
     own_book, common = _books(registry, kind)
-    code = own_book(coder).get(code_id)
+    owner = IMPORTED if kind == "video" and registry.books.imported_video.get(code_id) else coder
+    code = own_book(owner).get(code_id)
     if code is None:
         raise KeyError(code_id)
     if not final:
         raise CodebookError("confirm the code has been discussed and is final before moving it to common")
-    _require_complete(registry, kind, coder)
+    _require_complete(registry, kind, owner)
 
     target = None
     if into:
@@ -509,7 +520,7 @@ def move_code(registry, kind: str, coder: str, code_id: str, *, final: bool, des
     summary = {"moved": 0, "duplicates": 0, "quotes_deleted": 0, "recordings": 0}
     plans = []
     for recording in registry.list():
-        store = (recording.store if kind == "text" else recording.video_codes).stores.get(coder)
+        store = (recording.store if kind == "text" else recording.video_codes).stores.get(owner)
         items = [i for i in store.list() if (code_id in (i.get("codes") or []) if kind == "text" else i.get("code_id") == code_id)] if store else []
         if items:
             plans.append((recording, store, items))
@@ -548,9 +559,15 @@ def move_code(registry, kind: str, coder: str, code_id: str, *, final: bool, des
         applied = recording.common_quotes if kind == "text" else recording.common_spans
         for item in items:
             summary["moved"] += 1
-            summary["duplicates"] += int(applied.add(coder, item, target["id"]))
+            if owner == IMPORTED:
+                summary["duplicates"] += int(applied.add(coder, item, target["id"], contributor=IMPORTED))
+            else:
+                summary["duplicates"] += int(applied.add(coder, item, target["id"]))
     for recording, store, items in plans:
         for item in items:
+            if owner == IMPORTED:
+                store.remove(item["id"], coder)
+                continue
             if kind == "video":
                 store.remove(item["id"])
                 continue
@@ -561,11 +578,15 @@ def move_code(registry, kind: str, coder: str, code_id: str, *, final: bool, des
                 store.delete(item["id"])
                 summary["quotes_deleted"] += 1
 
-    own_book(coder).remove(code_id)
-    # The coder's themes now hold the common code in its place.
+    if owner == IMPORTED:
+        own_book(owner).remove(code_id, coder, moved_to=target["id"])
+    else:
+        own_book(coder).remove(code_id)
+    # The coder's themes now hold the common code in its place; for an imported
+    # code, other coders' themes follow when each next loads them.
     registry.theme_store(coder).replace_ref(f"{kind}:{code_id}", f"{kind}:{target['id']}")
-    _record_history(registry, coder, {"action": "moved", "kind": kind, "code_id": target["id"],
-                                      "name": target["name"], "from": code["name"], **summary})
+    entry = {"action": "moved", "kind": kind, "code_id": target["id"], "name": target["name"], "from": code["name"], **summary}
+    _record_history(registry, coder, {**entry, **({"owner": IMPORTED} if owner == IMPORTED else {})})
     return summary
 
 
@@ -613,7 +634,16 @@ def return_code(registry, kind: str, coder: str, code_id: str) -> dict:
 
 
 def _hand_back(registry, recording, coder: str, item: dict) -> None:
-    """Place the caller's own item now; keep everyone else's, and any that fails, for later."""
+    """Place the caller's own item now; keep everyone else's, and any that fails, for later.
+
+    An imported span goes straight back to the recording's imported row, written
+    by the caller, since no coder syncs as ``IMPORTED`` to claim it later.
+    """
+    if item["owner"] == IMPORTED:
+        code = registry.books.imported_video.ensure(coder, item["code"]["name"])
+        recording.video_codes.stores[IMPORTED].restore(coder, code["id"], item["span"]["start"],
+                                                       item["span"]["end"], item.get("note", ""))
+        return
     if item["owner"] == coder:
         try:
             _claim(registry, recording, coder, item)
