@@ -44,7 +44,7 @@
 <div class="roster" id="roster" hidden></div>
 <div class="timing" id="timing" hidden></div>
 
-<!-- Three panes, each resizable and collapsible: the video with its code rows,
+<!-- Three panes, each resizable and collapsible: the video with its code rows and the conversation,
      the transcript, and the text codes beside the text they belong to. -->
 <div class="panes" id="panes">
   <div class="pane-stack" data-stack="watch" data-label="Video" style="flex-grow:40">
@@ -93,6 +93,17 @@
         <div class="vc-manage" id="vc-manage"></div>
         <div class="panel__filters" id="vc-filters"></div>
         <div id="vc-list"></div>
+      </div>
+    </section>
+    <div class="pane-div pane-div--h"></div>
+    <!-- The participant's chat, with highlight cards in a column beside the messages, both in one scroll body. -->
+    <section class="pane" data-pane="conversation" data-label="Conversation" style="flex-grow:45" id="panel-conversation">
+      <header class="pane__head">Conversation <span class="count" id="conv-count">0</span><span class="pane__sp"></span>
+        <button class="pane__x" type="button" data-collapse aria-label="Collapse the conversation">–</button></header>
+      <div class="panel__filters" id="conv-filters"></div>
+      <div class="pane__body conv" id="conv-body">
+        <div class="conv__messages" id="conv-messages"></div>
+        <div class="conv__cards quotes-level" id="conv-cards"></div>
       </div>
     </section>
   </div>

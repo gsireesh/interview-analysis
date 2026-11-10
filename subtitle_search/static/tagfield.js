@@ -1,13 +1,11 @@
-/* A token field for the text codes on a quote.
+/* A token field for the text codes on a quote, or the conversation codes on a conversation highlight.
  *
- * Suggestions come from the text codebook (yours and common names), ranked
+ * Suggestions come from that codebook (yours and common names), ranked
  * prefix first, then by how widely each is used, so the established code is the
  * obvious pick. A common name picked here creates your own code of that name.
  */
 
 import { escapeHtml } from "./util.js";
-
-const MAX_SUGGESTIONS = 8;
 
 function normalize(tag) {
   return tag.trim().replace(/\s+/g, " ");
@@ -29,9 +27,14 @@ function rank(vocabulary, query, chosen) {
     })
     .filter(Boolean)
     .sort((a, b) => b.score - a.score || b.entry.recording_count - a.entry.recording_count)
-    .slice(0, MAX_SUGGESTIONS)
     .map((hit) => hit.entry);
 }
+
+//: How widely a text code is used, as its suggestion says.
+const recordingUse = (entry) =>
+  entry.recording_count
+    ? `${entry.quote_count} in ${entry.recording_count} recording${entry.recording_count === 1 ? "" : "s"}`
+    : "used before, nothing on it now";
 
 /**
  * Turn every `.tagfield` placeholder under `root` into a working field.
@@ -43,14 +46,15 @@ function rank(vocabulary, query, chosen) {
  * @param decorate     (tag) -> {before, after} html around a chip's name, e.g. a
  *                     colour swatch and the coder's initials
  * @param noun         what a token is called in the field's labels
+ * @param use          (entry) -> how widely a suggestion is used; by default its quotes across recordings
  */
-export function mountTagFields(root, { getTags, getVocabulary, onCommit, decorate, noun = "tag" }) {
+export function mountTagFields(root, { getTags, getVocabulary, onCommit, decorate, noun = "tag", use = recordingUse }) {
   for (const host of root.querySelectorAll(".tagfield:not([data-ready])")) {
-    mount(host, { getTags, getVocabulary, onCommit, decorate, noun });
+    mount(host, { getTags, getVocabulary, onCommit, decorate, noun, use });
   }
 }
 
-function mount(host, { getTags, getVocabulary, onCommit, decorate, noun }) {
+function mount(host, { getTags, getVocabulary, onCommit, decorate, noun, use }) {
   const id = host.dataset.id;
   host.dataset.ready = "1";
   let tags = [...(getTags(id) || [])];
@@ -98,11 +102,7 @@ function mount(host, { getTags, getVocabulary, onCommit, decorate, noun }) {
       <li class="tagfield__option" role="option" id="${listId}-${index}"
           aria-selected="${index === active}" data-tag="${escapeHtml(entry.tag)}">
         <span class="tagfield__tag">${escapeHtml(entry.tag)}</span>
-        <span class="tagfield__use">${
-          entry.recording_count
-            ? `${entry.quote_count} in ${entry.recording_count} recording${entry.recording_count === 1 ? "" : "s"}`
-            : "used before, nothing on it now"
-        }</span>
+        <span class="tagfield__use">${use(entry)}</span>
       </li>`
     );
 
@@ -183,6 +183,7 @@ function mount(host, { getTags, getVocabulary, onCommit, decorate, noun }) {
       // established tag, and the one the field exists to steer you towards.
       active = active < 0 ? (step > 0 ? 0 : count - 1) : (active + step + count) % count;
       drawList();
+      list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
       return;
     }
 

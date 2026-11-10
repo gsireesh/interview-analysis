@@ -8,8 +8,9 @@ mark what was said. The two codebooks are separate and never merged.
 - ``VideoCodeStore``: one coder's spans in one recording,
   ``<recording>/coders/<id>/video_codes.json``, in session seconds, so a span can
   cross an interruption and never moves when a caption is corrected.
-- ``SessionVideoCodes``: every coder's spans plus common spans for a recording;
-  it writes only to the caller's own store.
+- ``SessionVideoCodes``: every coder's spans plus common and imported spans for
+  a recording; it writes only to the caller's own store, and the times of an
+  imported span, which any coder may move.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from __future__ import annotations
 import uuid
 
 from .codebook import COLORS, Codebook, CodebookError
+from .common import IMPORTED
 from .jsonstore import JsonStore, now
 
 SCHEMA_VERSION = 1
@@ -190,6 +192,12 @@ class SessionVideoCodes:
         return self._label(coder, self.store_for(coder).add(payload, codebook, duration))
 
     def update(self, coder: str, span_id: str, patch: dict, codebook: VideoCodebook, duration: float | None) -> dict:
+        """Change one of ``coder``'s spans, or the times of an imported span, which any coder may move."""
+        imported = self.stores.get(IMPORTED)
+        if imported is not None and imported._find(span_id):
+            if not patch or set(patch) - {"start", "end"}:
+                raise PermissionError("only the start and end of an imported span can be changed")
+            return self._label(IMPORTED, imported.retime(coder, span_id, patch, duration))
         return self._label(coder, self._own(coder, span_id).update(span_id, patch, codebook, duration))
 
     def remove(self, coder: str, span_id: str) -> bool:

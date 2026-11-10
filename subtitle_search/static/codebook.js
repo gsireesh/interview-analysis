@@ -3,10 +3,14 @@
  * The reader shows one recording; a codebook covers them all, so reviewing a code
  * -- reading everything filed under it, cleaning it up before it is agreed --
  * happens here. Text codes and video codes are separate codebooks and are shown
- * one at a time. The list on the left is Imported, Common, then yours, plus every
- * other coder's in collaborative mode. The page on the right is one code: its
+ * one at a time. The list on the left is Common, then yours, plus every other
+ * coder's in collaborative mode, then Imported. The page on the right is one code: its
  * description, the themes holding it, and each quote or span that carries it,
  * with a link to that moment.
+ *
+ * The two panes scroll separately and each has a search box: the list matches
+ * code names, the table matches quote and note text, and its Recording and Coder
+ * headers filter rows. Searches ignore case and stay when another code is opened.
  *
  * Your own and common codes are edited with the same ⋯ menu as in the reader,
  * and their uses removed in bulk: for a text code that takes the code off the
@@ -25,7 +29,7 @@ const esc = escapeHtml;
 const params = new URLSearchParams(location.search);
 
 const state = {
-  kind: params.get("kind") === "video" ? "video" : "text",
+  kind: ["video", "conversation"].includes(params.get("kind")) ? params.get("kind") : "text",
   codeId: params.get("code"),
   codes: [],
   colors: [],
@@ -37,6 +41,14 @@ const state = {
   themes: [],
   //: Saved quotes with no code, of those on screen in this mode.
   uncoded: [],
+  //: The list search: codes whose name contains it, ignoring case.
+  listQuery: "",
+  //: The table search: rows whose quote or note contains it, ignoring case.
+  pageQuery: "",
+  //: Values unticked in the table's Recording and Coder filters; kept when another code is opened.
+  hidden: { recording: new Set(), coder: new Set() },
+  //: The column whose filter checklist is open, if any.
+  filterOpen: null,
 };
 //: The list group a code or quote falls in: Common, yours, or another coder's.
 const groupOf = (item) => (isCommon(item) ? "__common" : isImported(item) ? "__imported" : isMine(item) ? "__mine" : item.coder);
@@ -49,9 +61,64 @@ const editable = (code) => isMine(code) || isCommon(code);
 const hasMenu = (code) => editable(code) || isImported(code);
 
 const el = { meta: $("meta"), notices: $("notices"), list: $("code-list"), page: $("code-page") };
-const noun = () => (state.kind === "text" ? "text code" : "video code");
-const uses = (code) => (state.kind === "text" ? code.quote_count : code.span_count) || 0;
+const noun = () => `${state.kind} code`;
+//: Text and conversation codes sit on saved passages; video codes sit on spans.
+const onPassages = () => state.kind !== "video";
+const uses = (code) => (state.kind === "text" ? code.quote_count : state.kind === "conversation" ? code.highlight_count : code.span_count) || 0;
+//: What one use of the open kind's code is called.
+const useWord = () => (state.kind === "text" ? "quote" : state.kind === "conversation" ? "highlight" : "span");
+//: The turn cell of a conversation row, which has no time.
+const turnText = (r) => (r.start_turn == null ? "" : r.end_turn == null || r.end_turn === r.start_turn ? `turn ${r.start_turn}` : `turn ${r.start_turn} → ${r.end_turn}`);
+//: The reader link of a row: the highlight for conversation, the time otherwise.
+const rowLink = (r) => `/reader?recording=${encodeURIComponent(r.recording_id)}&${state.kind === "conversation" ? `conv=${encodeURIComponent(r.highlight_id)}` : `t=${r.start_time ?? r.start}`}`;
+const rowCells = (r) => (state.kind === "conversation" ? turnText(r) : formatTime(r.start_time ?? r.start));
+//: Orders rows by recording title, then time, or for conversation rows by place in the chat (`position` from the server).
+const byPosition = (a, b) => (a.position?.[0] ?? Infinity) - (b.position?.[0] ?? Infinity) || (a.position?.[1] ?? 0) - (b.position?.[1] ?? 0);
+const byRecording = (a, b) => a.recording_title.localeCompare(b.recording_title) || (state.kind === "conversation" ? byPosition(a, b) : (a.start_time ?? a.start) - (b.start_time ?? b.start));
 const current = () => state.codes.find((c) => c.id === state.codeId);
+//: The rows the open page lists, before any search or filter.
+const pageRows = () => (uncodedGroup() ? state.uncoded.filter((q) => groupOf(q) === uncodedGroup()) : state.applications);
+
+//: The table's column filters: the value each row is filtered on, and the name shown in the checklist.
+const FILTERS = {
+  recording: { label: "Recording", value: (r) => r.recording_id, name: (r) => r.recording_title },
+  coder: { label: "Coder", value: (r) => r.coder ?? "", name: (r) => nameOf(r.coder) },
+};
+
+//: The rows that pass the table search and every column filter.
+function visibleRows(rows) {
+  const q = state.pageQuery.toLowerCase();
+  return rows.filter(
+    (r) =>
+      (!q || (r.text || "").toLowerCase().includes(q) || (r.note || "").toLowerCase().includes(q)) &&
+      Object.entries(FILTERS).every(([key, f]) => !state.hidden[key].has(f.value(r)))
+  );
+}
+
+//: A filterable column header; its checklist lists the values among this page's rows.
+function filterHead(key, rows) {
+  const f = FILTERS[key];
+  const values = new Map(rows.map((r) => [f.value(r), f.name(r)]));
+  const narrowed = [...values.keys()].some((v) => state.hidden[key].has(v));
+  const open = state.filterOpen === key;
+  const menu = open
+    ? `<div class="cbook__filter-menu">
+        <span class="cbook__filter-acts"><button type="button" data-filter-all="${key}">Select all</button><button type="button" data-filter-none="${key}">Clear</button></span>
+        ${[...values]
+          .sort((a, b) => a[1].localeCompare(b[1]))
+          .map(([v, name]) => `<label><input type="checkbox" data-filter="${key}" value="${esc(v)}" ${state.hidden[key].has(v) ? "" : "checked"}> ${esc(name)}</label>`)
+          .join("")}
+      </div>`
+    : "";
+  return `<th class="cbook__filter"><button class="cbook__filter-btn${narrowed ? " cbook__filter-btn--on" : ""}" type="button" data-filter-open="${key}" aria-expanded="${open}">${f.label} ▾</button>${menu}</th>`;
+}
+
+//: The count line: every row, or how many of them the search and filters leave.
+function factsLine(all, shown, word) {
+  const recordings = new Set(shown.map((r) => r.recording_id)).size;
+  const count = shown.length === all.length ? `<b>${all.length}</b> ${word}${all.length === 1 ? "" : "s"}` : `<b>${shown.length}</b> of ${all.length} ${word}${all.length === 1 ? "" : "s"} shown`;
+  return `<p class="cbook__facts">${count} in <b>${recordings}</b> recording${recordings === 1 ? "" : "s"}</p>`;
+}
 
 function remember() {
   const url = new URL(location.href);
@@ -65,10 +132,11 @@ async function loadCodes() {
   const book = await api(`/api/library/${state.kind}-codebook`);
   state.codes = book.codes;
   state.colors = book.colors;
-  state.uncoded = state.kind === "text" ? (await api("/api/library/text-codebook/uncoded")).quotes.filter(visibleNow) : [];
+  state.uncoded = state.kind === "text" ? (await api("/api/library/text-codebook/uncoded")).quotes.filter(visibleNow)
+    : state.kind === "conversation" ? (await api("/api/library/conversation-codebook/uncoded")).highlights.filter(visibleNow) : [];
   const group = uncodedGroup();
   const gone = group
-    ? state.kind !== "text" || !(group.startsWith("__") || currentMode() === "collaborative")
+    ? !onPassages() || !(group.startsWith("__") || currentMode() === "collaborative")
     : !visibleNow(current() || {});
   if (state.codeId && gone) state.codeId = null;
   renderList();
@@ -105,8 +173,11 @@ async function loadPage() {
 
 function renderList() {
   const shown = state.codes.filter(visibleNow);
+  const q = state.listQuery.toLowerCase();
+  const matches = (name) => name.toLowerCase().includes(q);
+  const listed = shown.filter((code) => matches(code.name));
   const groups = new Map();
-  for (const code of shown) {
+  for (const code of listed) {
     const key = groupOf(code);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(code);
@@ -114,13 +185,14 @@ function renderList() {
   // Each group lists its coder's unlabelled quotes first; yours shows even at none.
   const uncodedCount = new Map();
   for (const quote of state.uncoded) uncodedCount.set(groupOf(quote), (uncodedCount.get(groupOf(quote)) || 0) + 1);
-  if (state.kind === "text") uncodedCount.set("__mine", uncodedCount.get("__mine") || 0);
+  if (onPassages()) uncodedCount.set("__mine", uncodedCount.get("__mine") || 0);
+  if (!matches(`Unlabelled ${useWord()}s`)) uncodedCount.clear();
   for (const key of uncodedCount.keys()) if (!groups.has(key)) groups.set(key, []);
   const order = [
-    "__imported",
     "__common",
     "__mine",
     ...[...groups.keys()].filter((k) => !k.startsWith("__")).sort((a, b) => nameOf(a).localeCompare(nameOf(b))),
+    "__imported",
   ];
   el.meta.textContent = `${shown.length} ${noun()}${shown.length === 1 ? "" : "s"} · ${currentMode()}`;
 
@@ -129,15 +201,15 @@ function renderList() {
       ? `<div class="cbook__row${state.codeId === UNCODED + key ? " cbook__row--on" : ""}">
           <button class="cbook__pick" type="button" data-pick="${esc(UNCODED + key)}">
             <i class="strip__swatch"></i>
-            <span class="cbook__name">Unlabelled quotes</span>
+            <span class="cbook__name">Unlabelled ${useWord()}s</span>
             <span class="strip__count">${uncodedCount.get(key)}</span>
           </button>
         </div>`
       : "";
   const empty = shown.length
-    ? ""
+    ? listed.length || uncodedCount.size ? "" : `<p class="empty">No ${noun()}s match.</p>`
     : `<p class="empty">No ${noun()}s yet. ${
-        state.kind === "text" ? "Add one to a quote in the reader." : "Press i and o on a video to code a span."
+        state.kind === "text" ? "Add one to a quote in the reader." : state.kind === "conversation" ? "Add one to a highlight in the reader." : "Press i and o on a video to code a span."
       }</p>`;
   el.list.innerHTML = order
     .filter((key) => groups.has(key))
@@ -168,18 +240,19 @@ function renderList() {
 /* ---------------------------------------------------------------- page -- */
 
 function renderUncoded(group) {
-  const quotes = state.uncoded.filter((q) => groupOf(q) === group);
-  const recordings = new Set(quotes.map((q) => q.recording_id));
-  const rows = quotes
-    .sort((a, b) => a.recording_title.localeCompare(b.recording_title) || a.start_time - b.start_time)
+  const quotes = pageRows().sort(byRecording);
+  const word = useWord();
+  const shown = visibleRows(quotes);
+  const rows = shown
     .map((q) => {
-      const link = `/reader?recording=${encodeURIComponent(q.recording_id)}&t=${q.start_time}`;
+      const link = rowLink(q);
       return `<tr>
         <td>${esc(q.recording_title)}</td>
-        <td class="cbook__time">${formatTime(q.start_time)}</td>
-        <td><span class="cbook__quote">“${esc(q.text)}”</span>${q.speaker ? `<span class="cbook__speaker">${esc(q.speaker)}</span>` : ""}${q.note ? `<span class="cbook__speaker">Note: ${esc(q.note)}</span>` : ""}</td>
+        <td class="cbook__time">${rowCells(q)}</td>
+        <td><span class="cbook__quote">“${esc(q.text)}”</span>${q.speaker ? `<span class="cbook__speaker">${esc(q.speaker)}</span>` : ""}</td>
+        <td>${esc(q.note || "")}</td>
         <td>${coderTag(q.coder)}</td>
-        <td><a class="cbook__jump" href="${link}" target="_blank" rel="noopener">▶ open</a></td>
+        <td><a class="cbook__jump" href="${link}" target="_blank" rel="noopener">${state.kind === "conversation" ? "open" : "▶ open"}</a></td>
       </tr>`;
     })
     .join("");
@@ -187,15 +260,16 @@ function renderUncoded(group) {
     <header class="cbook__head">
       <i class="strip__swatch cbook__swatch"></i>
       <div class="cbook__title">
-        <h2>Unlabelled quotes ${group === "__mine" ? "" : coderTag(group === "__common" ? COMMON : group)}</h2>
-        <p>Saved quotes that have no code yet. Add a code to one in the reader and it leaves this list.</p>
+        <h2>Unlabelled ${word}s ${group === "__mine" ? "" : coderTag(group === "__common" ? COMMON : group)}</h2>
+        <p>Saved ${word}s that have no code yet. Add a code to one in the reader and it leaves this list.</p>
       </div>
     </header>
-    <p class="cbook__facts"><b>${quotes.length}</b> quote${quotes.length === 1 ? "" : "s"} in <b>${recordings.size}</b> recording${recordings.size === 1 ? "" : "s"}</p>
+    ${factsLine(quotes, shown, word)}
     ${
       quotes.length
-        ? `<table class="cbook__table"><thead><tr><th>Recording</th><th>Time</th><th>Quote</th><th>Coder</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-        : `<p class="empty">Every saved quote has a code.</p>`
+        ? `<table class="cbook__table"><thead><tr>${filterHead("recording", quotes)}<th>${state.kind === "conversation" ? "Turn" : "Time"}</th><th>${state.kind === "conversation" ? "Highlight" : "Quote"}</th><th>Note</th>${filterHead("coder", quotes)}<th></th></tr></thead><tbody>${rows}</tbody></table>
+          ${shown.length ? "" : `<p class="empty">No ${word}s match.</p>`}`
+        : `<p class="empty">Every saved ${word} has a code.</p>`
     }`;
 }
 
@@ -207,27 +281,31 @@ function renderPage() {
     return;
   }
   const mine = editable(code);
-  const recordings = new Set(state.applications.map((a) => a.recording_id));
-  const rows = state.applications
-    .sort((a, b) => a.recording_title.localeCompare(b.recording_title) || (a.start_time ?? a.start) - (b.start_time ?? b.start))
+  const all = state.applications.sort(byRecording);
+  const shown = visibleRows(all);
+  // A row the search or filters hide is deselected, so bulk removal only acts on rows in view.
+  const shownRefs = new Set(shown.map((a) => a.ref));
+  state.selected = new Set([...state.selected].filter((ref) => shownRefs.has(ref)));
+  const word = useWord();
+  const rows = shown
     .map((a) => {
-      const at = a.start_time ?? a.start;
-      const link = `/reader?recording=${encodeURIComponent(a.recording_id)}&t=${at}`;
-      const what = state.kind === "text"
+      const link = rowLink(a);
+      const what = onPassages()
         ? `<span class="cbook__quote">“${esc(a.text)}”</span>${a.speaker ? `<span class="cbook__speaker">${esc(a.speaker)}</span>` : ""}`
-        : `<span class="cbook__len">${Math.round((a.end - a.start) * 10) / 10}s</span>${a.note ? `<span class="cbook__speaker">${esc(a.note)}</span>` : ""}`;
+        : `<span class="cbook__len">${Math.round((a.end - a.start) * 10) / 10}s</span>`;
       return `<tr>
         <td>${mine ? `<input type="checkbox" data-ref="${esc(a.ref)}" ${state.selected.has(a.ref) ? "checked" : ""} aria-label="Select">` : ""}</td>
         <td>${esc(a.recording_title)}</td>
-        <td class="cbook__time">${formatTime(at)}</td>
+        <td class="cbook__time">${rowCells(a)}</td>
         <td>${what}</td>
+        <td>${esc(a.note || "")}</td>
         <td>${coderTag(a.coder)}</td>
-        <td><a class="cbook__jump" href="${link}" target="_blank" rel="noopener">▶ open</a></td>
+        <td><a class="cbook__jump" href="${link}" target="_blank" rel="noopener">${state.kind === "conversation" ? "open" : "▶ open"}</a></td>
       </tr>`;
     })
     .join("");
 
-  const removeLabel = state.kind === "text" ? "Take the code off selected quotes" : "Delete selected spans";
+  const removeLabel = onPassages() ? `Take the code off selected ${word}s` : "Delete selected spans";
   el.page.innerHTML = `
     <header class="cbook__head">
       <i class="strip__swatch cbook__swatch vc--${esc(code.color)}"></i>
@@ -238,18 +316,19 @@ function renderPage() {
       ${hasMenu(code) ? `<span class="cbook__head-menu"><button class="strip__menu-btn cbook__more" type="button" data-menu="${code.id}" aria-label="Actions for ${esc(code.name)}" aria-haspopup="menu">⋯</button></span>` : `<span class="cbook__readonly">${esc(nameOf(code.coder))}'s code · read-only</span>`}
     </header>
     ${state.editing ? codeEditor(state.editing, { colors: state.colors, withKeys: state.kind === "video", noun: noun() }, state.codes.map((c) => ({ ...c, total: uses(c) }))) : ""}
-    <p class="cbook__facts"><b>${state.applications.length}</b> ${state.kind === "text" ? "quote" : "span"}${state.applications.length === 1 ? "" : "s"} in <b>${recordings.size}</b> recording${recordings.size === 1 ? "" : "s"}</p>
+    ${factsLine(all, shown, word)}
     <p class="cbook__facts">In themes: ${
       state.themes.length
         ? state.themes.map((t) => `<a href="/themes">${esc(t.title || "Untitled")}</a> ${coderTag(t.coder)}`).join(", ")
         : "none yet"
     }</p>
     ${
-      state.applications.length
-        ? `${mine ? `<div class="cbook__toolbar"><label><input type="checkbox" id="select-all" ${state.selected.size && state.selected.size === state.applications.length ? "checked" : ""}> Select all</label>
+      all.length
+        ? `${mine ? `<div class="cbook__toolbar"><label><input type="checkbox" id="select-all" ${state.selected.size && state.selected.size === shown.length ? "checked" : ""}> Select all</label>
             <span class="cbook__count">${state.selected.size} selected</span>
             <button class="btn btn--danger" type="button" id="remove-selected" ${state.selected.size ? "" : "disabled"}>${removeLabel}</button></div>` : ""}
-          <table class="cbook__table"><thead><tr><th></th><th>Recording</th><th>Time</th><th>${state.kind === "text" ? "Quote" : "Span"}</th><th>Coder</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+          <table class="cbook__table"><thead><tr><th></th>${filterHead("recording", all)}<th>${state.kind === "conversation" ? "Turn" : "Time"}</th><th>${state.kind === "text" ? "Quote" : state.kind === "conversation" ? "Highlight" : "Span"}</th><th>Note</th>${filterHead("coder", all)}<th></th></tr></thead><tbody>${rows}</tbody></table>
+          ${shown.length ? "" : `<p class="empty">No ${word}s match.</p>`}`
         : `<p class="empty">Nothing carries this code yet.</p>`
     }
     ${isCommon(code) ? historyPanel() : ""}`;
@@ -269,7 +348,7 @@ function historyPanel() {
     .map((e) => {
       const what = HISTORY_WORDS[e.action] || e.action;
       const detail = e.action === "moved"
-        ? `${e.moved} ${state.kind === "text" ? "quote" : "span"}${e.moved === 1 ? "" : "s"}${e.duplicates ? `, ${e.duplicates} combined` : ""}${e.from && e.from !== e.name ? `, from “${esc(e.from)}”` : ""}`
+        ? `${e.moved} ${useWord()}${e.moved === 1 ? "" : "s"}${e.duplicates ? `, ${e.duplicates} combined` : ""}${e.from && e.from !== e.name ? `, from “${esc(e.from)}”` : ""}`
         : e.action === "edited"
         ? `${(e.changes || []).map((f) => (f === "color" ? "colour" : f)).join(", ")}${e.from ? `, from “${esc(e.from)}”` : ""}`
         : e.removed != null ? `${e.removed} removed`
@@ -320,7 +399,7 @@ async function act(action, code, value) {
 async function removeSelected() {
   const code = current();
   const refs = [...state.selected];
-  const what = state.kind === "text" ? `Take “${code.name}” off ${refs.length} quote${refs.length === 1 ? "" : "s"}? The quotes stay.` : `Delete ${refs.length} span${refs.length === 1 ? "" : "s"} of “${code.name}”?`;
+  const what = onPassages() ? `Take “${code.name}” off ${refs.length} ${useWord()}${refs.length === 1 ? "" : "s"}? The ${useWord()}s stay.` : `Delete ${refs.length} span${refs.length === 1 ? "" : "s"} of “${code.name}”?`;
   if (!confirm(what)) return;
   try {
     const result = await api(`/api/library/${state.kind}-codebook/${code.id}/applications/remove`, { method: "POST", body: { refs } });
@@ -332,6 +411,25 @@ async function removeSelected() {
 }
 
 document.addEventListener("click", (event) => {
+  // A click outside the open filter checklist closes it, without redrawing the rows under the click.
+  if (state.filterOpen && !event.target.closest(".cbook__filter")) {
+    state.filterOpen = null;
+    el.page.querySelector(".cbook__filter-menu")?.remove();
+    el.page.querySelectorAll("[data-filter-open]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+  }
+  const filterOpen = event.target.closest("[data-filter-open]");
+  if (filterOpen) {
+    state.filterOpen = state.filterOpen === filterOpen.dataset.filterOpen ? null : filterOpen.dataset.filterOpen;
+    renderPage();
+    return;
+  }
+  const filterAll = event.target.closest("[data-filter-all], [data-filter-none]");
+  if (filterAll) {
+    const key = filterAll.dataset.filterAll || filterAll.dataset.filterNone;
+    for (const row of pageRows()) state.hidden[key][filterAll.dataset.filterAll ? "delete" : "add"](FILTERS[key].value(row));
+    renderPage();
+    return;
+  }
   const kind = event.target.closest("[data-kind]");
   if (kind && kind.dataset.kind !== state.kind) {
     state.kind = kind.dataset.kind;
@@ -345,6 +443,7 @@ document.addEventListener("click", (event) => {
   if (pick) {
     state.codeId = pick.dataset.pick;
     state.editing = null;
+    el.page.scrollTop = 0;
     renderList();
     loadPage();
     return;
@@ -379,11 +478,26 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("change", (event) => {
   if (event.target.id === "select-all") {
-    state.selected = event.target.checked ? new Set(state.applications.map((a) => a.ref)) : new Set();
+    state.selected = event.target.checked ? new Set(visibleRows(state.applications).map((a) => a.ref)) : new Set();
+    renderPage();
+  } else if (event.target.dataset.filter) {
+    const hidden = state.hidden[event.target.dataset.filter];
+    if (event.target.checked) hidden.delete(event.target.value);
+    else hidden.add(event.target.value);
     renderPage();
   } else if (event.target.dataset.ref) {
     if (event.target.checked) state.selected.add(event.target.dataset.ref);
     else state.selected.delete(event.target.dataset.ref);
+    renderPage();
+  }
+});
+
+document.addEventListener("input", (event) => {
+  if (event.target.id === "list-search") {
+    state.listQuery = event.target.value;
+    renderList();
+  } else if (event.target.id === "page-search") {
+    state.pageQuery = event.target.value;
     renderPage();
   }
 });

@@ -1,4 +1,4 @@
-"""Imported video codes: importing a diary, the shared offset, and moving them to common and back."""
+"""Imported video codes: importing a diary, the shared offset and times, and moving them to common and back."""
 
 import json
 
@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from subtitle_search.app import create_app
+from subtitle_search.codebook import CodebookError
 from subtitle_search.common import IMPORTED, move_code, return_code
 from subtitle_search.session import RecordingRegistry
 
@@ -98,9 +99,18 @@ def test_a_recording_is_imported_once_even_if_the_diary_changes(study):
     assert len(imported_spans(registry.default)) == 3
 
 
-def test_two_coders_importing_at_once_write_the_same_records(study, tmp_path):
+def test_the_import_is_one_shared_file_beside_the_transcript(study, tmp_path):
+    registry, ann, _ = study
+    recording = registry.default
+    recording.imported.import_diary(ann, registry.books.imported_video, recording.transcript)
+    assert (recording.folder / "imported_video_codes.json").is_file()
+    assert (tmp_path / "imported_video_codebook.json").is_file()
+    assert not list(tmp_path.glob("**/coders/*/common/imported*"))
+
+
+def test_a_coder_whose_tool_has_not_reread_the_folder_does_not_import_twice(study, tmp_path):
     registry, ann, ben = study
-    # Ben's tool opened the study before Ann's import synced to it.
+    # Ben's tool opened the study before Ann's import reached it.
     other = RecordingRegistry()
     other.add_library(tmp_path)
     registry.default.imported.import_diary(ann, registry.books.imported_video, registry.default.transcript)
@@ -134,6 +144,60 @@ def test_the_offset_shifts_the_row_and_hides_spans_pushed_outside(study):
     assert starts == [0.0, 10.0, 19.5]  # prompt_sent clipped at the start, the others shifted
     recording.imported.set_offset(ben, -12)
     assert recording.imported.status()["hidden"] == 1
+
+
+# -- changing one span's times ----------------------------------------------------------
+
+
+def prompt_span(registry, recording):
+    return next(s for s in imported_spans(recording) if registry.books.imported_video.get(s["code_id"])["name"] == "prompt_sent")
+
+
+def test_any_coder_retimes_one_imported_span_and_the_offset_still_applies(study):
+    registry, ann, ben = study
+    recording = registry.default
+    recording.imported.import_diary(ann, registry.books.imported_video, recording.transcript)
+    span = prompt_span(registry, recording)
+
+    recording.video_codes.update(ben, span["id"], {"start": 12.0, "end": 14.0}, registry.books.video(ben), recording.transcript.duration)
+    recording.imported.set_offset(ann, 1.0)
+
+    moved = prompt_span(registry, recording)
+    assert (moved["start"], moved["end"]) == (13.0, 15.0) and moved["edited"]
+    others = [s for s in imported_spans(recording) if s["id"] != span["id"]]
+    assert all(not s.get("edited") for s in others)
+
+
+def test_only_the_times_of_an_imported_span_change(study):
+    registry, ann, _ = study
+    recording = registry.default
+    recording.imported.import_diary(ann, registry.books.imported_video, recording.transcript)
+    span = prompt_span(registry, recording)
+    book, duration = registry.books.video(ann), recording.transcript.duration
+
+    with pytest.raises(PermissionError):
+        recording.video_codes.update(ann, span["id"], {"note": "mine"}, book, duration)
+    with pytest.raises(PermissionError):
+        recording.video_codes.remove(ann, span["id"])
+    with pytest.raises(CodebookError):
+        recording.video_codes.update(ann, span["id"], {"start": 20.0, "end": 19.0}, book, duration)
+
+
+def test_a_change_rereads_the_file_so_it_keeps_what_synced_in_since(study, tmp_path):
+    registry, ann, ben = study
+    registry.default.imported.import_diary(ann, registry.books.imported_video, registry.default.transcript)
+    # Ben's tool read the folder before Ann changed the offset.
+    other = RecordingRegistry()
+    other.add_library(tmp_path)
+    registry.default.imported.set_offset(ann, 3.0)
+    theirs = other.default
+    span = prompt_span(other, theirs)
+
+    theirs.video_codes.update(ben, span["id"], {"start": 20.0, "end": 22.0}, other.books.video(ben), theirs.transcript.duration)
+    registry.refresh()
+
+    assert registry.default.imported.offset == 3.0
+    assert prompt_span(registry, registry.default)["start"] == 20.0
 
 
 # -- moving to common and back ------------------------------------------------------------
@@ -200,11 +264,14 @@ def test_importing_needs_a_coder(api):
     assert anonymous.post(f"/api/recordings/{registry.default.id}/imported/import").status_code == 401
 
 
-def test_imported_spans_and_codes_are_read_only(api):
-    registry, ann, _ = api
+def test_imported_spans_take_new_times_but_nothing_else(api):
+    registry, ann, ben = api
     rid = registry.default.id
     span = ann.post(f"/api/recordings/{rid}/imported/import").json()["spans"][0]
 
+    retimed = ben.patch(f"/api/recordings/{rid}/video-codes/{span['id']}", json={"end": span["end"] + 2})
+    assert retimed.status_code == 200 and retimed.json()["span"]["coder"] == IMPORTED
+    assert ann.patch(f"/api/recordings/{rid}/video-codes/{span['id']}", json={"end": span["start"]}).status_code == 400
     assert ann.patch(f"/api/recordings/{rid}/video-codes/{span['id']}", json={"note": "x"}).status_code == 403
     assert ann.delete(f"/api/recordings/{rid}/video-codes/{span['id']}").status_code == 403
     assert ann.patch(f"/api/library/video-codebook/{span['code_id']}", json={"name": "y"}).status_code == 403

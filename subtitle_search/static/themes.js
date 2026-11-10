@@ -1,6 +1,6 @@
 /* Thematic analysis across every recording in the library.
  *
- * Themes hold codes (text and video); their quotes and spans are the evidence.
+ * Themes hold codes (text, video and conversation); their quotes, spans and highlights are the evidence.
  * Views, because the work has more than one shape:
  *
  *   Canvas - the themes on a plane. Generative, and the one with no right-hand
@@ -426,11 +426,11 @@ function codeCard(item, { column = null } = {}) {
          .map((theme) => `<option value="${theme.id}"${theme.id === column ? " selected" : ""}>${escapeHtml(theme.title || "Untitled")}</option>`)
          .join("")}
      </select>`;
-  const noun = item.kind === "video" ? "span" : "quote";
+  const noun = { video: "span", conversation: "highlight" }[item.kind] || "quote";
   return `
     <article class="qcard qcard--code vc--${escapeHtml(item.color || "slate")}" data-ref="${item.ref}"
              data-column="${column || ""}" draggable="true">
-      <p class="qcard__text">${item.kind === "video" ? "▶ " : ""}${escapeHtml(item.name)} ${coderTag(item.coder)}</p>
+      <p class="qcard__text">${{ video: "▶ ", conversation: "❝ " }[item.kind] || ""}${escapeHtml(item.name)} ${coderTag(item.coder)}</p>
       <div class="qcard__meta">
         <span class="qcard__where">${item.count} ${noun}${item.count === 1 ? "" : "s"} · ${item.recordings.length} rec</span>
         <span class="qcard__tools">
@@ -584,7 +584,8 @@ el.boardColumns.addEventListener("click", async (event) => {
 
   if (action === "play" && card) {
     const item = state.byRef.get(card.dataset.ref);
-    if (item?.applications?.length) startQueue(item.applications, item.name);
+    const playable = (item?.applications || []).filter((a) => a.start_time != null);
+    if (playable.length) startQueue(playable, item.name);
     else if (item?.text && item.start_time != null) startQueue([item], item.text.slice(0, 40));
     else notify(el.notices, "Nothing carries that code yet.");
     return;
@@ -594,7 +595,7 @@ el.boardColumns.addEventListener("click", async (event) => {
   if (!theme) return;
 
   if (action === "play-theme") {
-    const quotes = theme.refs.flatMap((ref) => state.byRef.get(ref)?.applications || []);
+    const quotes = theme.refs.flatMap((ref) => (state.byRef.get(ref)?.applications || []).filter((a) => a.start_time != null));
     if (quotes.length) startQueue(quotes, theme.title);
     else notify(el.notices, "Nothing in that theme has a quote or span yet.");
   } else if (action === "promote-theme") {

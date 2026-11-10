@@ -6,6 +6,8 @@ import pytest
 
 from subtitle_search.library import CommonThemeStore, ThemeStore
 
+from . import fixtures
+
 
 @pytest.fixture
 def store(tmp_path):
@@ -348,3 +350,40 @@ def test_a_failed_drag_into_a_common_theme_leaves_the_card_where_it_was(api, mon
     monkeypatch.undo()
     themes = {t["title"]: t["refs"] for t in ann.get("/api/library/themes").json()["themes"]}
     assert themes["Own"] == [common["ref"]]
+
+
+# -- conversation refs ------------------------------------------------------------
+
+
+def conversation_study(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from subtitle_search.app import create_app
+    from subtitle_search.session import RecordingRegistry
+
+    registry = RecordingRegistry()
+    registry.add_folder(tmp_path)
+    ann = registry.coders.create("Ann Lee", "AL")["id"]
+    code = registry.books.conversation(ann).add({"name": "trust"})["id"]
+    return TestClient(create_app(registry), headers={"X-Coder": ann}), registry, ann, code
+
+
+def test_theme_accepts_conversation_ref(tmp_path):
+    (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX)
+    api, _, _, code = conversation_study(tmp_path)
+
+    created = api.post("/api/library/themes", json={"title": "Trust", "cards": [{"ref": f"conversation:{code}", "x": 40, "y": 120}]})
+
+    assert created.status_code == 201
+    assert api.get("/api/library/themes").json()["placed"] == [f"conversation:{code}"]
+
+
+def test_deleting_conversation_code_drops_theme_card(tmp_path):
+    (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX)
+    api, _, _, code = conversation_study(tmp_path)
+    api.post("/api/library/themes", json={"title": "Trust", "cards": [{"ref": f"conversation:{code}", "x": 40, "y": 120}]})
+
+    assert api.delete(f"/api/library/conversation-codebook/{code}").status_code == 200
+
+    state = api.get("/api/library/themes").json()
+    assert state["cards"] == [] and state["placed"] == []

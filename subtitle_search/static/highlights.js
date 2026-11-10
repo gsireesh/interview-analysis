@@ -3,6 +3,9 @@
  *
  * Cards sit level with their quote in the transcript and scroll with it. Every change
  * writes to disk immediately, so there is no save step.
+ *
+ * The selection bar also saves and copies a selection in the Conversation pane, handing it to
+ * conversation.js, which shares packCards and the card templates from here.
  */
 
 import { api, escapeHtml, formatTime } from "./util.js";
@@ -11,6 +14,7 @@ import { mountTagFields } from "./tagfield.js";
 import { coderTag, initialsOf, isCommon, isMine, visibleNow } from "./coder.js";
 import { openMoveDialog, returnToCoders } from "./commondialog.js";
 import { renderStrip } from "./codestrip.js";
+import { conversationSelection, copyConversationSelection, saveConversationHighlight } from "./conversation.js";
 
 export function initHighlights(ctx) {
   renderSwatches(ctx);
@@ -52,29 +56,43 @@ function levelQuotes(ctx) {
     }
     return anchor ? anchor.getBoundingClientRect().top - readerTop + reader.scrollTop + shift : null;
   });
+  const active = cards.findIndex((card) => card.dataset.id === ctx.activeHighlightId);
+  const tops = packCards(cards, wants, active, CARD_GAP);
+  cards.forEach((card, i) => (card.style.top = `${tops[i]}px`));
+
+  const bottom = tops.at(-1) + cards.at(-1).offsetHeight + CARD_GAP;
+  list.style.setProperty("--level-height", `${Math.max(bottom, reader.scrollHeight + shift)}px`);
+  list.scrollTop = reader.scrollTop;
+}
+
+/**
+ * Place cards in order, each as near its wanted top as the cards around it allow, never overlapping.
+ *
+ * @param cards        the card elements, in display order
+ * @param wants        each card's wanted top in px, or null for a card with nothing to line up with
+ * @param activeIndex  the card that sits exactly at its wanted top, or -1 to push every card down from 0
+ * @param gap          px between cards
+ * @returns each card's top in px
+ */
+export function packCards(cards, wants, activeIndex, gap) {
   const heights = cards.map((card) => card.offsetHeight);
   // The lowest each card can sit while every card before it still fits above it.
   const room = [];
-  heights.reduce((sum, height, i) => ((room[i] = sum), sum + height + CARD_GAP), 0);
+  heights.reduce((sum, height, i) => ((room[i] = sum), sum + height + gap), 0);
 
   const tops = [];
-  const active = cards.findIndex((card) => card.dataset.id === ctx.activeHighlightId);
-  if (active >= 0) {
-    tops[active] = Math.max(wants[active] ?? room[active], room[active]);
-    for (let i = active - 1; i >= 0; i -= 1) {
-      const ceiling = tops[i + 1] - CARD_GAP - heights[i];
+  if (activeIndex >= 0) {
+    tops[activeIndex] = Math.max(wants[activeIndex] ?? room[activeIndex], room[activeIndex]);
+    for (let i = activeIndex - 1; i >= 0; i -= 1) {
+      const ceiling = tops[i + 1] - gap - heights[i];
       tops[i] = Math.max(room[i], Math.min(wants[i] ?? ceiling, ceiling));
     }
   }
-  for (let i = active + 1; i < cards.length; i += 1) {
-    const floor = i ? tops[i - 1] + heights[i - 1] + CARD_GAP : 0;
+  for (let i = activeIndex + 1; i < cards.length; i += 1) {
+    const floor = i ? tops[i - 1] + heights[i - 1] + gap : 0;
     tops[i] = Math.max(wants[i] ?? floor, floor);
   }
-  cards.forEach((card, i) => (card.style.top = `${tops[i]}px`));
-
-  const bottom = tops.at(-1) + heights.at(-1) + CARD_GAP;
-  list.style.setProperty("--level-height", `${Math.max(bottom, reader.scrollHeight + shift)}px`);
-  list.scrollTop = reader.scrollTop;
+  return tops;
 }
 
 /* Clicking a card makes its quote active. The card stays where it is on screen and
@@ -264,20 +282,28 @@ async function handOverSelection(ctx, speaker) {
 }
 
 function refreshQuoteBar(ctx) {
-  const anchors = selectionAnchors(ctx);
+  // A selection in the Conversation pane has no time and no speaker to hand words to.
+  const conversation = conversationSelection(ctx);
+  const anchors = conversation ? null : selectionAnchors(ctx);
+  ctx.pendingConversation = conversation;
   ctx.pendingSelection = anchors;
   const bar = ctx.el.quotebar;
 
-  if (!anchors) {
+  if (!anchors && !conversation) {
     bar.hidden = true;
     return;
   }
 
-  ctx.el.quotebarTime.textContent = `→ ${formatTime(anchors.estimated_start)}`;
-  renderHandOver(ctx, anchors);
+  ctx.el.quotebarTime.hidden = Boolean(conversation);
+  if (conversation) {
+    ctx.el.quotebarHand.hidden = true;
+  } else {
+    ctx.el.quotebarTime.textContent = `→ ${formatTime(anchors.estimated_start)}`;
+    renderHandOver(ctx, anchors);
+  }
   bar.hidden = false;
 
-  const rect = anchors.rect;
+  const rect = (conversation || anchors).rect;
   const width = bar.offsetWidth || 260;
   const left = Math.min(
     Math.max(8, rect.left + rect.width / 2 - width / 2),
@@ -291,9 +317,15 @@ function refreshQuoteBar(ctx) {
 export function hideQuoteBar(ctx) {
   ctx.el.quotebar.hidden = true;
   ctx.pendingSelection = null;
+  ctx.pendingConversation = null;
 }
 
+/** The selection in the Conversation pane, unless the quote bar was last shown for one in the transcript. */
+const conversationPending = (ctx) => ctx.pendingConversation || (!ctx.pendingSelection && conversationSelection(ctx));
+
 export async function save(ctx, { color, focusNote = false } = {}) {
+  const conversation = conversationPending(ctx);
+  if (conversation) return saveConversationHighlight(ctx, conversation, { color, focusNote });
   const anchors = ctx.pendingSelection || selectionAnchors(ctx);
   if (!anchors) {
     ctx.notify("Select some text first.");
@@ -332,6 +364,8 @@ export async function save(ctx, { color, focusNote = false } = {}) {
 }
 
 export function copySelection(ctx) {
+  const conversation = conversationPending(ctx);
+  if (conversation) return copyConversationSelection(ctx, conversation);
   const anchors = ctx.pendingSelection || selectionAnchors(ctx);
   if (!anchors) return;
   const speaker = anchors.speaker ? `${anchors.speaker} ` : "";
@@ -448,13 +482,24 @@ export function renderList(ctx) {
   levelQuotes(ctx);
 }
 
-function ownCard(ctx, highlight) {
+/** A quote's speaker and time, the metadata a card shows unless given its own. */
+const quoteMeta = (highlight) =>
+  `<span class="quote__speaker">${escapeHtml(highlight.speaker || "—")}</span>
+          <time>${formatTime(highlight.start_time)}</time>`;
+
+/**
+ * Your own card: editable colour, note and codes.
+ *
+ * @param meta   html of the card's metadata line; a quote's speaker and time by default
+ * @param extra  further classes on the card
+ * @param noun   what the card holds, for its button titles
+ */
+export function ownCard(ctx, highlight, { meta = quoteMeta(highlight), extra = "", noun = "quote" } = {}) {
   return `
-      <article class="quote quote--${highlight.color}" data-id="${highlight.id}">
+      <article class="quote quote--${highlight.color}${extra}" data-id="${highlight.id}">
         <p class="quote__text" data-action="jump">${escapeHtml(highlight.text)}</p>
         <div class="quote__meta">
-          <span class="quote__speaker">${escapeHtml(highlight.speaker || "—")}</span>
-          <time>${formatTime(highlight.start_time)}</time>
+          ${meta}
           <span class="quote__tools">
             <span class="swatches">
               ${ctx.colors
@@ -464,8 +509,8 @@ function ownCard(ctx, highlight) {
                 )
                 .join("")}
             </span>
-            <button class="icon-btn" type="button" data-action="copy" title="Copy quote">⧉</button>
-            <button class="icon-btn" type="button" data-action="delete" title="Delete quote">✕</button>
+            <button class="icon-btn" type="button" data-action="copy" title="Copy ${noun}">⧉</button>
+            <button class="icon-btn" type="button" data-action="delete" title="Delete ${noun}">✕</button>
           </span>
         </div>
         <textarea class="quote__note" rows="1" placeholder="Note" data-action="note">${escapeHtml(highlight.note || "")}</textarea>
@@ -473,23 +518,27 @@ function ownCard(ctx, highlight) {
       </article>`;
 }
 
-/** Another coder's quote in collaborative mode, or a common one: visible, labelled, read-only. */
-function otherCard(ctx, highlight) {
-  const chips = (highlight.codes || []).map((id) => staticChip(codeById(ctx, id))).join("");
+/**
+ * Another coder's quote in collaborative mode, or a common one: visible, labelled, read-only.
+ *
+ * @param meta, extra, noun  as for ownCard
+ * @param codeOf             (code id) -> the code, for the chips; a text code by default
+ */
+export function otherCard(ctx, highlight, { meta = quoteMeta(highlight), extra = "", noun = "quote", codeOf = (id) => codeById(ctx, id) } = {}) {
+  const chips = (highlight.codes || []).map((id) => staticChip(codeOf(id))).join("");
   const common = isCommon(highlight);
   // A common quote's note is each contributor's own, labelled with who wrote it.
   const notes = common
     ? (highlight.notes || []).map((n) => `<p class="quote__note-text"><b>${escapeHtml(initialsOf(n.coder))}</b> ${escapeHtml(n.note)}</p>`).join("")
     : "";
   return `
-      <article class="quote quote--${highlight.color} quote--theirs" data-id="${highlight.id}">
+      <article class="quote quote--${highlight.color} quote--theirs${extra}" data-id="${highlight.id}">
         <p class="quote__text" data-action="jump">${escapeHtml(highlight.text)}</p>
         <div class="quote__meta">
-          <span class="quote__speaker">${escapeHtml(highlight.speaker || "—")}</span>
-          <time>${formatTime(highlight.start_time)}</time>
+          ${meta}
           <span class="quote__by">${common ? `${coderTag("common")} from ${(highlight.contributors || []).map((c) => escapeHtml(initialsOf(c))).join(", ")}` : `by ${coderTag(highlight.coder)}`}</span>
           <span class="quote__tools">
-            <button class="icon-btn" type="button" data-action="copy" title="Copy quote">⧉</button>
+            <button class="icon-btn" type="button" data-action="copy" title="Copy ${noun}">⧉</button>
           </span>
         </div>
         ${highlight.note ? `<p class="quote__note-text">${escapeHtml(highlight.note)}</p>` : ""}

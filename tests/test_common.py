@@ -153,3 +153,19 @@ def test_the_library_shows_common_quotes_in_both_modes_marked_as_common(base):
 
     assert [q["tags"] for q in all_quotes(registry, "independent", "ben")] == [["trust"]]
     assert [q["tags"] for q in all_quotes(registry, "collaborative", "ben")] == [["trust · ✓"]]
+
+
+def test_common_quotes_custom_anchors(base):
+    from subtitle_search.common import CommonQuotes
+
+    anchors = ("start_message_id", "start_char_offset", "end_message_id", "end_char_offset")
+    common = CommonQuotes(base, "conversation_highlights.json", "conversation_highlight_codes.json",
+                          anchors=anchors, fields=(*anchors, "text", "color"))
+    source = {"id": "h1", "text": "hi", "start_message_id": "m1", "start_char_offset": 0,
+              "end_message_id": "m1", "end_char_offset": 2, "color": "teal", "note": ""}
+
+    assert common.add("ann", source, "k1") is False
+    assert common.add("ben", {**source, "id": "h2"}, "k1") is True
+    assert common.find({**source, "text": "other"})["start_message_id"] == "m1"
+    assert common.find({**source, "end_char_offset": 3}) is None
+    assert "start_cue_id" not in common.find(source)

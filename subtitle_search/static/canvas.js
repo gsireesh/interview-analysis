@@ -338,10 +338,10 @@ function packHeight(count, width) {
  * re-sort on every redraw of a view that writes nothing at all.
  */
 function packingKey(card) {
-  // Code cards pack alphabetically, text codes before video, as tidying does.
+  // Code cards pack alphabetically, text codes before video before conversation, as tidying does.
   const item = ctx.state.byRef.get(card.ref);
   if (!item) return [2, "", 0, ""];
-  return [0, (item.name || "").toLowerCase(), item.kind === "video" ? 1 : 0, ""];
+  return [0, (item.name || "").toLowerCase(), { text: 0, video: 1, conversation: 2 }[item.kind] ?? 0, ""];
 }
 
 function packingOrder(cards) {
@@ -441,7 +441,25 @@ function readerLink(item) {
 //: Code cards opened to show their quotes or spans, by card.
 const expanded = new Set();
 const cardKey = (card) => `${card.ref}|${card.theme_id || ""}`;
-const noun = (item) => (item.kind === "video" ? "span" : "quote");
+const noun = (item) => ({ video: "span", conversation: "highlight" }[item.kind] || "quote");
+//: Typographic marker shown before the name of a non-text code.
+const GLYPH = { video: "▶", conversation: "❝" };
+const TITLE = { video: "Video code", conversation: "Conversation code" };
+//: Applications a Play queue can use: conversation highlights have no time.
+const playable = (applications) => (applications || []).filter((a) => a.start_time != null);
+
+/** One application's link and label: a time for text and video, a speaker and turn for conversation. */
+function applicationMarkup(a) {
+  const rec = encodeURIComponent(a.recording_id);
+  if (a.start_time == null) {
+    const turns = a.end_turn != null && a.end_turn !== a.start_turn ? `turn ${a.start_turn} → ${a.end_turn}` : `turn ${a.start_turn}`;
+    const where = [a.speaker, turns].filter(Boolean).join(" · ");
+    return `<li><a href="/reader?recording=${rec}&conv=${encodeURIComponent(a.highlight_id)}" target="_blank" rel="noopener">${escapeHtml(a.recording_title)} · ${escapeHtml(where)}</a>${
+      a.text ? ` ${escapeHtml(a.text)}` : ""}</li>`;
+  }
+  return `<li><a href="/reader?recording=${rec}&t=${a.start_time}" target="_blank" rel="noopener">${escapeHtml(a.recording_title)} · ${formatTime(a.start_time)}</a>${
+    a.text ? ` ${escapeHtml(a.text)}` : ""}</li>`;
+}
 
 /** The card as it appears on the plane: a code, which opens to show its evidence. */
 function cardMarkup(item, card) {
@@ -449,11 +467,7 @@ function cardMarkup(item, card) {
   const uses = `${item.count} ${noun(item)}${item.count === 1 ? "" : "s"} · ${item.recordings.length} rec`;
   const applications = open
     ? `<ol class="ccard__apps">${item.applications
-        .map((a) => {
-          const link = `/reader?recording=${encodeURIComponent(a.recording_id)}&t=${a.start_time}`;
-          return `<li><a href="${link}" target="_blank" rel="noopener">${escapeHtml(a.recording_title)} · ${formatTime(a.start_time)}</a>${
-            a.text ? ` ${escapeHtml(a.text)}` : ""}</li>`;
-        })
+        .map(applicationMarkup)
         .join("") || "<li>Nothing carries this code yet.</li>"}</ol>`
     : "";
   return `
@@ -463,7 +477,7 @@ function cardMarkup(item, card) {
              style="left:${card.x}px; top:${card.y}px"
              tabindex="0" role="group"
              aria-label="${escapeHtml(item.name)}, ${escapeHtml(uses)}">
-      <p class="ccard__text">${item.kind === "video" ? '<span class="ccard__video" title="Video code">▶</span> ' : ""}${escapeHtml(item.name)} ${coderTag(item.coder)}</p>
+      <p class="ccard__text">${GLYPH[item.kind] ? `<span class="ccard__video" title="${TITLE[item.kind]}">${GLYPH[item.kind]}</span> ` : ""}${escapeHtml(item.name)} ${coderTag(item.coder)}</p>
       <footer class="ccard__foot">
         <span class="ccard__who">${escapeHtml(uses)}</span>
         <button class="icon-btn" data-act="expand" type="button" aria-expanded="${open}"
@@ -703,6 +717,7 @@ function renderFilters() {
   fillFilter(el.filterTag, "any code", [
     ["tag:text", "text codes"],
     ["tag:video", "▶ video codes"],
+    ["tag:conversation", "conversation codes"],
     [null, null],
     ["state:any", "used somewhere"],
     ["state:none", "not used yet"],
@@ -740,7 +755,7 @@ function renderTray() {
           <article class="tray__item tray__item--code vc--${escapeHtml(item.color || "slate")}"
                    data-ref="${escapeHtml(item.ref)}" tabindex="0"
                    title="Drag onto the canvas, or press enter">
-            <p class="tray__text">${item.kind === "video" ? "▶ " : ""}${escapeHtml(item.name)} ${coderTag(item.coder)}</p>
+            <p class="tray__text">${GLYPH[item.kind] ? `${GLYPH[item.kind]} ` : ""}${escapeHtml(item.name)} ${coderTag(item.coder)}</p>
             <p class="tray__meta">
               <span class="tray__who">${item.count} ${noun(item)}${item.count === 1 ? "" : "s"} in ${item.recordings.length} recording${item.recordings.length === 1 ? "" : "s"}</span>
               ${readerLink(item)}
@@ -1270,7 +1285,7 @@ async function onSurfaceClick(event) {
 
   if (act === "play" && card) {
     const item = ctx.state.byRef.get(card.dataset.ref);
-    if (item?.applications?.length) ctx.startQueue(item.applications, item.name);
+    if (playable(item?.applications).length) ctx.startQueue(playable(item.applications), item.name);
     else if (item) ctx.notify("Nothing carries that code yet.");
     return;
   }
@@ -1299,7 +1314,7 @@ async function onSurfaceClick(event) {
     return;
   }
   if (act === "play-theme") {
-    const quotes = theme.refs.flatMap((ref) => ctx.state.byRef.get(ref)?.applications || []);
+    const quotes = theme.refs.flatMap((ref) => playable(ctx.state.byRef.get(ref)?.applications));
     if (quotes.length) ctx.startQueue(quotes, theme.title);
     else ctx.notify("Nothing in that theme has a quote or span yet.");
   } else if (act === "promote") {

@@ -87,8 +87,8 @@ def resolve_span(transcript: Transcript, payload: dict) -> dict:
     }
 
 
-def _normalize_codes(raw: Any, codebook) -> list[str]:
-    """Text code ids, in order and without repeats, each one from the coder's codebook."""
+def _normalize_codes(raw: Any, codebook, kind: str = "text") -> list[str]:
+    """Code ids, in order and without repeats, each one from the coder's codebook; ``kind`` names the codes in the error."""
     if not isinstance(raw, list):
         return []
     seen: list[str] = []
@@ -97,7 +97,7 @@ def _normalize_codes(raw: Any, codebook) -> list[str]:
         if not code_id or code_id in seen:
             continue
         if codebook is not None and codebook.get(code_id) is None:
-            raise HighlightError("that text code is not in your codebook")
+            raise HighlightError(f"that {kind} code is not in your codebook")
         seen.append(code_id)
     return seen
 

@@ -1,9 +1,12 @@
 """Moving codes to common, and returning them to their coders."""
 
+import json
+
 import pytest
 
 from subtitle_search.codebook import CodebookError
 from subtitle_search.common import ClashError, claim_returns, history_for, move_code, return_code
+from subtitle_search.conversation import CONVERSATION_FILENAME
 from subtitle_search.session import RecordingRegistry
 
 from . import fixtures
@@ -13,9 +16,19 @@ def quote(start=0, end=5, **extra):
     return {"text": "Cool.", "start_cue_id": "c0", "start_char_offset": start, "end_cue_id": "c0", "end_char_offset": end, **extra}
 
 
+USER_MSG = "c1:0:0:user"
+
+
+def highlight(start=0, end=5, **extra):
+    return {"text": "hello", "start_message_id": USER_MSG, "start_char_offset": start,
+            "end_message_id": USER_MSG, "end_char_offset": end, **extra}
+
+
 @pytest.fixture
 def study(tmp_path):
     (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX)
+    message = {"record_type": "message", "conversation_id": "c1", "turn": 0, "version": 0, "role": "user", "text": "hello there"}
+    (tmp_path / CONVERSATION_FILENAME).write_text(json.dumps(message) + "\n")
     registry = RecordingRegistry()
     registry.add_folder(tmp_path)
     ann = registry.coders.create("Ann Lee", "AL")["id"]
@@ -29,6 +42,10 @@ def text_code(registry, coder, name):
 
 def video_code(registry, coder, name):
     return registry.books.video(coder).add({"name": name})["id"]
+
+
+def conversation_code(registry, coder, name):
+    return registry.books.conversation(coder).add({"name": name})["id"]
 
 
 # -- moving text codes ---------------------------------------------------------
@@ -367,3 +384,68 @@ def test_a_dry_run_into_a_common_text_code_counts_both_kinds_of_duplicate(study)
 
     into = registry.books.common_text.find("trust")["id"]
     assert dry_then_real_duplicates(registry, "text", ann, a, into=into) == (3, 3)
+
+
+# -- conversation codes follow the text path ------------------------------------------
+
+
+def test_conversation_move_creates_common(study):
+    """Moving a conversation code makes it common, carries its highlight over, and deletes the coder's emptied highlight."""
+    registry, rec, ann, _ = study
+    trust = conversation_code(registry, ann, "trust")
+    rec.conversation_highlights.create(ann, highlight(codes=[trust], note="relies on it"))
+
+    summary = move_code(registry, "conversation", ann, trust, final=True, description="Relies on the output")
+
+    common = registry.books.common_conversation.find("trust")
+    assert common["description"] == "Relies on the output"
+    assert (summary["moved"], summary["quotes_deleted"]) == (1, 1)
+    [ch] = [h for h in rec.conversation_highlights.list() if h["coder"] == "common"]
+    assert (ch["codes"], ch["start_message_id"], ch["text"]) == ([common["id"]], USER_MSG, "hello")
+    assert ch["notes"] == [{"coder": ann, "note": "relies on it"}]
+    assert [h for h in rec.conversation_highlights.list() if h["coder"] == ann] == []
+    assert registry.books.conversation(ann).get(trust) is None
+    assert registry.books.common_text.list() == []
+    assert [e["action"] for e in history_for(registry, "conversation", common["id"])] == ["moved"]
+
+
+def test_conversation_duplicates_combine(study):
+    """Two coders' highlights with all four anchors equal become one common highlight with both as contributors."""
+    registry, rec, ann, ben = study
+    a, b = conversation_code(registry, ann, "trust"), conversation_code(registry, ben, "trust")
+    rec.conversation_highlights.create(ann, highlight(codes=[a]))
+    rec.conversation_highlights.create(ben, highlight(codes=[b]))
+    move_code(registry, "conversation", ann, a, final=True, description="")
+    into = registry.books.common_conversation.find("trust")["id"]
+
+    assert dry_then_real_duplicates(registry, "conversation", ben, b, into=into) == (1, 1)
+    [ch] = [h for h in rec.conversation_highlights.list() if h["coder"] == "common"]
+    assert ch["contributors"] == sorted([ann, ben])
+
+
+def test_conversation_return_and_claim(study):
+    """Returning a common conversation code gives the asker theirs at once and holds the others' until they claim."""
+    registry, rec, ann, ben = study
+    a, b = conversation_code(registry, ann, "trust"), conversation_code(registry, ben, "trust")
+    rec.conversation_highlights.create(ann, highlight(codes=[a], note="ann's"))
+    rec.conversation_highlights.create(ben, highlight(codes=[b], note="ben's"))
+    move_code(registry, "conversation", ann, a, final=True, description="")
+    common_id = registry.books.common_conversation.find("trust")["id"]
+    move_code(registry, "conversation", ben, b, final=True, description="", into=common_id)
+    registry.books.common_conversation.update(common_id, {"name": "reliance", "description": "now"}, coder=ben)
+
+    assert return_code(registry, "conversation", ann, common_id) == {"returned": 2}
+
+    assert registry.books.common_conversation.get(common_id) is None
+    assert [h for h in rec.conversation_highlights.list() if h["coder"] == "common"] == []
+    [mine] = [h for h in rec.conversation_highlights.list() if h["coder"] == ann]
+    code = registry.books.conversation(ann).get(mine["codes"][0])
+    assert (code["name"], code["description"], mine["note"]) == ("reliance", "now", "ann's")
+    [waiting] = rec.returns.list()
+    assert (waiting["kind"], waiting["owner"], waiting["highlight"]["start_message_id"]) == ("conversation", ben, USER_MSG)
+    claim_returns(registry, ben)
+    [his] = [h for h in rec.conversation_highlights.list() if h["coder"] == ben]
+    assert registry.books.conversation(ben).get(his["codes"][0])["name"] == "reliance"
+    assert (his["note"], his["text"]) == ("ben's", "hello")
+    assert rec.returns.list() == []
+    assert [e["action"] for e in history_for(registry, "conversation", common_id)] == ["returned", "moved", "moved"]

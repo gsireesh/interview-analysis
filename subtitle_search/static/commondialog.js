@@ -15,7 +15,7 @@ import { api, CODER_KEY, escapeHtml, recall } from "./util.js";
 const esc = escapeHtml;
 
 /**
- * @param kind      "text" or "video"
+ * @param kind      "text", "video" or "conversation"
  * @param code      your code to move
  * @param common    the common codes of that kind, for merging into
  * @returns a promise of the move's result, or null if cancelled
@@ -33,7 +33,8 @@ export function openMoveDialog({ kind, code, common }) {
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-labelledby", "move-title");
     document.body.appendChild(overlay);
-    const noun = kind === "text" ? "quote" : "span";
+    const noun = { text: "quote", video: "span", conversation: "highlight" }[kind];
+    const onPassages = kind !== "video";
 
     const close = (result) => {
       overlay.remove();
@@ -64,8 +65,8 @@ export function openMoveDialog({ kind, code, common }) {
         out.innerHTML =
           `<span><b>${s.moved} ${noun}${s.moved === 1 ? "" : "s"}</b> in ${s.recordings} recording${s.recordings === 1 ? "" : "s"} move to ${where}.</span>` +
           (s.duplicates ? `<span><b>${s.duplicates}</b> ${s.duplicates === 1 ? "is an exact duplicate" : "are exact duplicates"} of another coder's and will be combined, credited to both.</span>` : "") +
-          (kind === "text" && s.quotes_deleted ? `<span>${s.quotes_deleted} of your quotes carry no other code and will be removed; their notes go with them to common.</span>` : "") +
-          (kind === "text" ? `<span>Other codes on your quotes stay as they are.</span>` : "") +
+          (onPassages && s.quotes_deleted ? `<span>${s.quotes_deleted} of your ${noun}s carry no other code and will be removed; their notes go with them to common.</span>` : "") +
+          (onPassages ? `<span>Other codes on your ${noun}s stay as they are.</span>` : "") +
           `<span>Undo later with ⋯ → Return to coders.</span>`;
       } catch (error) {
         out.textContent = error.message;
@@ -176,7 +177,7 @@ async function fetchMove(kind, codeId, payload) {
 
 /** Give a common code back to its coders, after saying what that does. */
 export async function returnToCoders(kind, code) {
-  const noun = kind === "text" ? "quotes" : "spans";
+  const noun = { text: "quotes", video: "spans", conversation: "highlights" }[kind];
   if (
     !confirm(
       `Return ✓ ${code.name} to its coders? Each coder gets their own ${noun} back under an independent code called “${code.name}”, and the common code is removed. Coders other than you receive theirs when they next press Sync.`

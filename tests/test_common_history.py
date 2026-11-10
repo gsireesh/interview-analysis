@@ -1,19 +1,26 @@
 """Edits, deletions and removals on a common code appear in its history; a coder's own code keeps none."""
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from subtitle_search.app import create_app
+from subtitle_search.conversation import CONVERSATION_FILENAME
 from subtitle_search.session import RecordingRegistry
 
 from . import fixtures
 
 QUOTE = {"text": "Cool.", "start_cue_id": "c0", "start_char_offset": 0, "end_cue_id": "c0", "end_char_offset": 5}
+HIGHLIGHT = {"text": "hello", "start_message_id": "c1:0:0:user", "start_char_offset": 0,
+             "end_message_id": "c1:0:0:user", "end_char_offset": 5}
 
 
 @pytest.fixture
 def client(tmp_path):
     (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX, encoding="utf-8")
+    message = {"record_type": "message", "conversation_id": "c1", "turn": 0, "version": 0, "role": "user", "text": "hello there"}
+    (tmp_path / CONVERSATION_FILENAME).write_text(json.dumps(message) + "\n")
     registry = RecordingRegistry()
     registry.add_folder(tmp_path)
     coder = registry.coders.create("Test Coder", "TC")
@@ -25,6 +32,8 @@ def common_code(http, rid, kind, name):
     code = http.post(f"/api/library/{kind}-codebook", json={"name": name}).json()["code"]
     if kind == "text":
         http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [code["id"]]})
+    elif kind == "conversation":
+        http.post(f"/api/recordings/{rid}/conversation-highlights", json={**HIGHLIGHT, "codes": [code["id"]]})
     else:
         http.post(f"/api/recordings/{rid}/video-codes", json={"code_id": code["id"], "start": 1, "end": 2})
     http.post(f"/api/library/{kind}-codebook/{code['id']}/move", json={"final": True})
@@ -35,7 +44,7 @@ def history(http, kind, code_id):
     return http.get(f"/api/library/{kind}-codebook/{code_id}/history").json()["entries"]
 
 
-@pytest.mark.parametrize("kind", ["text", "video"])
+@pytest.mark.parametrize("kind", ["text", "video", "conversation"])
 def test_renaming_a_common_code_records_the_old_name_and_what_changed(client, kind):
     http, rid = client
     code_id = common_code(http, rid, kind, "trust")
@@ -47,7 +56,7 @@ def test_renaming_a_common_code_records_the_old_name_and_what_changed(client, ki
     assert sorted(edited["changes"]) == ["description", "name"]
 
 
-@pytest.mark.parametrize("kind", ["text", "video"])
+@pytest.mark.parametrize("kind", ["text", "video", "conversation"])
 def test_removing_a_common_codes_uses_then_deleting_it_is_recorded(client, kind):
     http, rid = client
     code_id = common_code(http, rid, kind, "trust")
@@ -62,7 +71,7 @@ def test_removing_a_common_codes_uses_then_deleting_it_is_recorded(client, kind)
     assert entries[0]["name"] == "trust"
 
 
-@pytest.mark.parametrize("kind", ["text", "video"])
+@pytest.mark.parametrize("kind", ["text", "video", "conversation"])
 def test_edits_to_a_coders_own_code_record_nothing(client, kind):
     http, rid = client
     code = http.post(f"/api/library/{kind}-codebook", json={"name": "trust"}).json()["code"]

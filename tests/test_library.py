@@ -1158,3 +1158,75 @@ def test_a_code_cards_quotes_are_ordered_by_speaker_then_time(tmp_path):
     [trust] = [c for c in api.get("/api/library/codes").json()["codes"] if c["name"] == "trust"]
 
     assert [(a["speaker"], a["start_time"]) for a in trust["applications"]] == [("Amy", 8.0), ("Amy", 9.0), ("Zed", 8.0)]
+
+
+# -- conversation codes ------------------------------------------------------
+
+
+def conversation_library(root):
+    """The library fixture plus a chat in P01 carrying two highlights coded 'trust'."""
+    from subtitle_search.conversation import CONVERSATION_FILENAME
+
+    message = {"record_type": "message", "conversation_id": "c1", "turn": 0, "version": 0, "role": "user", "text": "hello there"}
+    (root / "P01" / CONVERSATION_FILENAME).write_text(json.dumps(message) + "\n")
+    registry = RecordingRegistry()
+    registry.add_library(root)
+    recording = registry.list()[0]
+    code = registry.books.conversation(CODER).add({"name": "trust"})["id"]
+    for offset in (6, 0):
+        recording.conversation_highlights.create(
+            CODER, {"text": "hello", "start_message_id": "c1:0:0:user", "start_char_offset": offset,
+                    "end_message_id": "c1:0:0:user", "end_char_offset": offset + 5, "codes": [code], "note": "n"})
+    return registry, recording, code
+
+
+def test_library_conversation_index(library):
+    registry, recording, code = conversation_library(library)
+    api = TestClient(create_app(registry), headers={"X-Coder": CODER})
+
+    [entry] = api.get("/api/library").json()["conversation"]
+
+    assert entry["id"] == code and entry["name"] == "trust" and entry["coder"] == CODER
+    assert entry["highlight_count"] == 2 and entry["recording_count"] == 1
+    assert entry["recordings"] == {recording.id: 2}
+    assert entry["color"]
+
+
+def test_code_items_include_conversation(library):
+    from subtitle_search.library import code_items
+
+    registry, recording, code = conversation_library(library)
+
+    [item] = [i for i in code_items(registry, "collaborative", CODER) if i["kind"] == "conversation"]
+
+    assert item["ref"] == f"conversation:{code}" and item["count"] == 2
+    assert item["recordings"] == [recording.id]
+    first, second = item["applications"]
+    assert [first["start_time"], first["end_time"]] == [None, None]
+    by_offset = sorted(recording.conversation_highlights.list(), key=lambda h: h["start_char_offset"])
+    assert [first["highlight_id"], second["highlight_id"]] == [h["id"] for h in by_offset]
+    assert first["speaker"] == "User" and first["message_id"] == "c1:0:0:user"
+    assert first["start_turn"] == 0 and first["highlight_id"] and first["coder"] == CODER
+    assert first["ref"] == f"{recording.id}:{first['highlight_id']}" and first["note"] == "n"
+
+
+def test_code_items_tolerate_a_malformed_message_id(library):
+    from subtitle_search.library import code_items
+
+    registry, recording, code = conversation_library(library)
+    recording.conversation_highlights.stores[CODER]._data["highlights"][0]["start_message_id"] = "bogus"
+
+    [item] = [i for i in code_items(registry, "collaborative", CODER) if i["kind"] == "conversation"]
+
+    assert item["count"] == 2
+    assert {a["speaker"] for a in item["applications"]} == {"User", None}
+
+
+def test_packing_order_conversation_last():
+    from subtitle_search.library import code_packing_order
+
+    items = [{"ref": f"{k}:x", "name": "same", "kind": k} for k in ("conversation", "video", "text")]
+
+    order = code_packing_order(items)
+
+    assert sorted(order, key=order.get) == ["text:x", "video:x", "conversation:x"]

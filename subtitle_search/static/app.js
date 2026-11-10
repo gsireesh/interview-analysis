@@ -28,6 +28,7 @@ import { enterEdit, exitEdit, isEditing, splitAtWord } from "./editing.js";
 import { notify, working } from "./chrome.js";
 import { initPanes } from "./layout.js";
 import { initVideoCodes, reloadVideoCodes, videoCodeKey } from "./video_codes.js";
+import { initConversation, reloadConversation } from "./conversation.js";
 
 const ctx = {
   el: {
@@ -459,8 +460,12 @@ async function load() {
   initSearch(ctx);
   initHighlights(ctx);
   initVideoCodes(ctx);
+  initConversation(ctx);
   initMute();
-  window.addEventListener("focus", () => reloadVideoCodes(ctx).catch(() => {}));
+  window.addEventListener("focus", () => {
+    reloadVideoCodes(ctx).catch(() => {});
+    reloadConversation(ctx).catch(() => {});
+  });
 
   // Whose work is on screen changes with the mode, or when you code as someone else.
   const redrawForMode = () => {
@@ -468,6 +473,7 @@ async function load() {
     applyHighlights(ctx);
     renderList(ctx);
     ctx.onVideoCodesModeChange?.();
+    ctx.onConversationModeChange?.();
   };
   window.addEventListener("modechange", redrawForMode);
   window.addEventListener("coderchange", () => {
@@ -479,6 +485,7 @@ async function load() {
       ctx.onTranscriptChanged(await api(`/api/recordings/${ctx.recordingId}`));
       await refreshTextCodes(ctx);
       await reloadVideoCodes(ctx);
+      await reloadConversation(ctx, ctx.data);
       ctx.notify("Synced with the folder.");
     },
   });
@@ -502,6 +509,9 @@ async function load() {
     seekAndPlay(ctx, at);
     flashCue(ctx, ctx.chunks[index]?.cue_ids?.[0]);
   }
+  // A link from the Codebook page or a theme card carries a conversation highlight.
+  const conv = params.get("conv");
+  if (conv) ctx.revealConversation?.(conv);
   showDiagnostics(data, diagnostics, config);
 }
 
@@ -663,6 +673,7 @@ ctx.el.follow.addEventListener("click", () => {
 window.addEventListener("resize", () => {
   cacheGeometry(ctx);
   updateSpine(ctx);
+  ctx.levelConversation?.();
 });
 
 // Resizing or collapsing a pane moves the text, so what is laid out against it
@@ -671,6 +682,7 @@ window.addEventListener("resize", () => {
 ctx.layout = initPanes(ctx.el.panes, {
   storageKey: "subtitle-search:readerPanes",
   onChange: () => {
+    ctx.levelConversation?.();
     if (!ctx.chunks.length) return;
     cacheGeometry(ctx);
     updateSpine(ctx);
@@ -824,6 +836,10 @@ document.addEventListener("keydown", (event) => {
       if (ctx.activeHighlightId) {
         ctx.activeHighlightId = null;
         applyHighlights(ctx);
+      }
+      if (ctx.conv?.activeId) {
+        ctx.conv.activeId = null;
+        ctx.levelConversation();
       }
       break;
     default:

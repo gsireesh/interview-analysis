@@ -253,8 +253,8 @@ ANCHORS = ("start_cue_id", "start_char_offset", "end_cue_id", "end_char_offset")
 QUOTE_FIELDS = (*ANCHORS, "start_time", "end_time", "text", "speaker", "color")
 
 
-def _anchors(item: dict) -> tuple:
-    return tuple(item.get(k) for k in ANCHORS)
+def _anchors(item: dict, anchors: tuple = ANCHORS) -> tuple:
+    return tuple(item.get(k) for k in anchors)
 
 
 def _live(contributions: CommonSet, key: str, value) -> list[dict]:
@@ -264,7 +264,10 @@ def _live(contributions: CommonSet, key: str, value) -> list[dict]:
 class CommonQuotes:
     """One recording's common quotes: where each is, and who coded it with what."""
 
-    def __init__(self, folder: Path, quotes_name: str, codes_name: str):
+    def __init__(self, folder: Path, quotes_name: str, codes_name: str, anchors: tuple = ANCHORS, fields: tuple = QUOTE_FIELDS):
+        #: The keys that say where a quote is, so two quotes on the same words match; and the keys copied into a common place.
+        self.anchors = anchors
+        self.fields = fields
         self.places = CommonSet(folder, quotes_name)
         self.codes = CommonSet(folder, codes_name)
 
@@ -311,7 +314,7 @@ class CommonQuotes:
 
     def find(self, source: dict) -> dict | None:
         """The common quote on exactly these words, if there is one."""
-        return next((p for p in self.places.list() if _anchors(p) == _anchors(source)), None)
+        return next((p for p in self.places.list() if _anchors(p, self.anchors) == _anchors(source, self.anchors)), None)
 
     def add(self, coder: str, source: dict, code_id: str) -> bool:
         """Record that ``coder`` put ``code_id`` on the words of ``source`` (their own quote).
@@ -322,10 +325,10 @@ class CommonQuotes:
         place = self.find(source)
         if place is None:
             # Named after the words, so two coders creating it at once create the same one.
-            key = "|".join(str(v) for v in _anchors(source))
+            key = "|".join(str(v) for v in _anchors(source, self.anchors))
             quote_id = _hashlib.sha1(key.encode()).hexdigest()[:12]
             if self.places.get(quote_id) is None:
-                self.places.put(coder, {"id": quote_id, **{k: source.get(k) for k in QUOTE_FIELDS}})
+                self.places.put(coder, {"id": quote_id, **{k: source.get(k) for k in self.fields}})
         else:
             quote_id = place["id"]
         others = [c for c in _live(self.codes, "quote", quote_id) if c["code_id"] == code_id]
@@ -463,10 +466,25 @@ def history_for(registry, kind: str, code_id: str) -> list[dict]:
     return sorted(entries, key=lambda e: e["at"], reverse=True)
 
 
+#: Kinds of code put on words. They share one path; a video code goes on a span of time instead.
+WORD_KINDS = ("text", "conversation")
+
+#: Where a returned item of a word kind keeps its place: a text quote, or a conversation highlight.
+_PLACE_KEY = {"text": "quote", "conversation": "highlight"}
+
+
 def _books(registry, kind: str):
-    own = registry.books.text if kind == "text" else registry.books.video
-    common = registry.books.common_text if kind == "text" else registry.books.common_video
-    return own, common
+    """Give the coder's codebook (called with a coder id) and the common codebook for one kind of code."""
+    books = registry.books
+    return {"text": (books.text, books.common_text), "conversation": (books.conversation, books.common_conversation),
+            "video": (books.video, books.common_video)}[kind]
+
+
+def _applied(recording, kind: str):
+    """Give a recording's items of one kind, every coder's, and its common items of that kind."""
+    return {"text": (recording.store, recording.common_quotes),
+            "conversation": (recording.conversation_highlights, recording.common_conversation),
+            "video": (recording.video_codes, recording.common_spans)}[kind]
 
 
 def _require_complete(registry, kind: str, coder: str | None = None) -> None:
@@ -479,9 +497,8 @@ def _require_complete(registry, kind: str, coder: str | None = None) -> None:
         names = ", ".join(name for name, _ in registry.failures)
         raise CodebookError(f"some recordings could not be read ({names}); wait for the folder to finish syncing, then press Sync")
     for recording in registry.list():
-        stores = (recording.store if kind == "text" else recording.video_codes).stores
-        common = recording.common_quotes if kind == "text" else recording.common_spans
-        own = stores.get(coder) if coder else None
+        items, common = _applied(recording, kind)
+        own = items.stores.get(coder) if coder else None
         if common.incomplete or (own is not None and own.unreadable):
             raise CodebookError(f"a file in {recording.title} could not be read; wait for it to finish syncing, then press Sync")
 
@@ -520,24 +537,25 @@ def move_code(registry, kind: str, coder: str, code_id: str, *, final: bool, des
     summary = {"moved": 0, "duplicates": 0, "quotes_deleted": 0, "recordings": 0}
     plans = []
     for recording in registry.list():
-        store = (recording.store if kind == "text" else recording.video_codes).stores.get(owner)
-        items = [i for i in store.list() if (code_id in (i.get("codes") or []) if kind == "text" else i.get("code_id") == code_id)] if store else []
+        store = _applied(recording, kind)[0].stores.get(owner)
+        items = [i for i in store.list() if (code_id in (i.get("codes") or []) if kind in WORD_KINDS else i.get("code_id") == code_id)] if store else []
         if items:
             plans.append((recording, store, items))
             summary["recordings"] += 1
     if dry_run:
         for recording, _, items in plans:
             # What the real move has combined into by each item: the target's applications, then the coder's earlier items.
-            if kind == "text":
-                seen = {_anchors(q) for q in recording.common_quotes.list() if target and target["id"] in q["codes"]}
+            applied = _applied(recording, kind)[1]
+            if kind in WORD_KINDS:
+                seen = {_anchors(q, applied.anchors) for q in applied.list() if target and target["id"] in q["codes"]}
             else:
-                seen = [(s["start"], s["end"]) for s in recording.common_spans.list() if target and s["code_id"] == target["id"]]
+                seen = [(s["start"], s["end"]) for s in applied.list() if target and s["code_id"] == target["id"]]
             for item in items:
                 summary["moved"] += 1
-                if kind == "text":
+                if kind in WORD_KINDS:
                     summary["quotes_deleted"] += int(len(item["codes"]) == 1)
-                    duplicate = _anchors(item) in seen
-                    seen.add(_anchors(item))
+                    duplicate = _anchors(item, applied.anchors) in seen
+                    seen.add(_anchors(item, applied.anchors))
                 else:
                     duplicate = any(abs(start - item["start"]) <= SPAN_TOLERANCE and abs(end - item["end"]) <= SPAN_TOLERANCE
                                     for start, end in seen)
@@ -556,7 +574,7 @@ def move_code(registry, kind: str, coder: str, code_id: str, *, final: bool, des
             target = common.update(target["id"], patch, coder=coder)
 
     for recording, _, items in plans:
-        applied = recording.common_quotes if kind == "text" else recording.common_spans
+        applied = _applied(recording, kind)[1]
         for item in items:
             summary["moved"] += 1
             if owner == IMPORTED:
@@ -606,14 +624,17 @@ def return_code(registry, kind: str, coder: str, code_id: str) -> dict:
     spec = {"name": code["name"], "description": code.get("description", ""), "color": code.get("color")}
     returned = 0
     for recording in registry.list():
-        if kind == "text":
-            for view in recording.common_quotes.list():
+        if kind in WORD_KINDS:
+            applied = _applied(recording, kind)[1]
+            # A text quote's times are left out: claiming it works them out again from its words.
+            fields = (*ANCHORS, "text", "speaker", "color") if kind == "text" else applied.fields
+            for view in applied.list():
                 if code_id not in view["codes"]:
                     continue
-                place = {k: view.get(k) for k in (*ANCHORS, "text", "speaker", "color")}
-                for c in recording.common_quotes.remove_code(coder, view["id"], code_id):
-                    _hand_back(registry, recording, coder, {"id": _uuid.uuid4().hex[:12], "owner": c["coder"], "kind": "text",
-                                                            "code": spec, "common_id": code_id, "quote": place, "note": c.get("note", "")})
+                place = {k: view.get(k) for k in fields}
+                for c in applied.remove_code(coder, view["id"], code_id):
+                    _hand_back(registry, recording, coder, {"id": _uuid.uuid4().hex[:12], "owner": c["coder"], "kind": kind,
+                                                            "code": spec, "common_id": code_id, _PLACE_KEY[kind]: place, "note": c.get("note", "")})
                     returned += 1
         else:
             for view in recording.common_spans.list():
@@ -640,7 +661,8 @@ def _hand_back(registry, recording, coder: str, item: dict) -> None:
     by the caller, since no coder syncs as ``IMPORTED`` to claim it later.
     """
     if item["owner"] == IMPORTED:
-        code = registry.books.imported_video.ensure(coder, item["code"]["name"])
+        name = item["code"]["name"]
+        code = registry.books.imported_video.ensure(coder, [name])[name]
         recording.video_codes.stores[IMPORTED].restore(coder, code["id"], item["span"]["start"],
                                                        item["span"]["end"], item.get("note", ""))
         return
@@ -655,18 +677,19 @@ def _hand_back(registry, recording, coder: str, item: dict) -> None:
 
 def _claim(registry, recording, coder: str, item: dict) -> None:
     spec = item["code"]
-    if item["kind"] == "text":
-        book = registry.books.text(coder)
+    if item["kind"] in WORD_KINDS:
+        book = _books(registry, item["kind"])[0](coder)
         code = book.find(spec["name"]) or book.add(spec)
-        store = recording.store
+        store, common = _applied(recording, item["kind"])
+        place = item[_PLACE_KEY[item["kind"]]]
         mine = store.stores.get(coder)
-        existing = next((q for q in mine.list() if _anchors(q) == _anchors(item["quote"])), None) if mine else None
+        existing = next((q for q in mine.list() if _anchors(q, common.anchors) == _anchors(place, common.anchors)), None) if mine else None
         if existing:
             codes = existing.get("codes", []) + ([code["id"]] if code["id"] not in existing.get("codes", []) else [])
             patch = {"codes": codes, **({"note": item["note"]} if item["note"] and not existing.get("note") else {})}
             store.update(coder, existing["id"], patch)
         else:
-            store.create(coder, {**item["quote"], "note": item["note"], "codes": [code["id"]]})
+            store.create(coder, {**place, "note": item["note"], "codes": [code["id"]]})
     else:
         book = registry.books.video(coder)
         code = book.find(spec["name"]) or book.add({k: v for k, v in spec.items() if k != "key"})

@@ -15,6 +15,9 @@ const el = {
   videoSection: $("video-section"),
   videoRail: $("video-rail"),
   videoCount: $("video-count"),
+  conversationSection: $("conversation-section"),
+  conversationRail: $("conversation-rail"),
+  conversationCount: $("conversation-count"),
   searchInput: $("search-input"),
   searchResults: $("search-results"),
   searchCount: $("search-count"),
@@ -25,7 +28,7 @@ function readerLink(recordingId, extra = "") {
   return `/reader?recording=${encodeURIComponent(recordingId)}${extra}`;
 }
 
-function recordingCard(recording, tagsByRecording, quoteCount, videoByRecording) {
+function recordingCard(recording, tagsByRecording, quoteCount, videoByRecording, conversationByRecording) {
   const parts = recording.part_count > 1
     ? `<span class="card__fact">${recording.part_count} recordings joined</span>`
     : "";
@@ -44,6 +47,10 @@ function recordingCard(recording, tagsByRecording, quoteCount, videoByRecording)
     .slice(0, 6)
     .map(([entry, count]) => `<span class="tag"><i class="strip__swatch vc--${escapeHtml(entry.color)}"></i> ${escapeHtml(entry.name)}<span class="tag__count">${count}</span></span>`)
     .join("");
+  const conversation = (conversationByRecording.get(recording.id) || [])
+    .slice(0, 6)
+    .map(([entry, count]) => `<span class="tag"><i class="strip__swatch vc--${escapeHtml(entry.color)}"></i> ${escapeHtml(entry.name)}<span class="tag__count">${count}</span></span>`)
+    .join("");
 
   return `
     <a class="card" href="${readerLink(recording.id)}">
@@ -59,6 +66,7 @@ function recordingCard(recording, tagsByRecording, quoteCount, videoByRecording)
       </p>
       <div class="tags">${tags}</div>
       ${video ? `<div class="tags">${video}</div>` : ""}
+      ${conversation ? `<div class="tags">${conversation}</div>` : ""}
     </a>`;
 }
 
@@ -69,6 +77,7 @@ function render(data) {
     `${data.quote_count} quotes`,
     `${data.tags.length} text codes`,
     `${(data.video || []).length} video codes`,
+    `${(data.conversation || []).length} conversation codes`,
   ].filter(Boolean).join("  ·  ");
 
   // Which text codes each recording carries, for the card chips.
@@ -88,10 +97,18 @@ function render(data) {
     }
   }
   for (const list of videoByRecording.values()) list.sort((a, b) => b[1] - a[1]);
+  const conversationByRecording = new Map();
+  for (const entry of data.conversation || []) {
+    for (const [recordingId, count] of Object.entries(entry.recordings)) {
+      if (!conversationByRecording.has(recordingId)) conversationByRecording.set(recordingId, []);
+      conversationByRecording.get(recordingId).push([entry, count]);
+    }
+  }
+  for (const list of conversationByRecording.values()) list.sort((a, b) => b[1] - a[1]);
 
   el.recordingCount.textContent = `${data.recordings.length}`;
   el.recordings.innerHTML = data.recordings
-    .map((recording) => recordingCard(recording, byRecording, data.quote_counts?.[recording.id] ?? recording.quote_count, videoByRecording))
+    .map((recording) => recordingCard(recording, byRecording, data.quote_counts?.[recording.id] ?? recording.quote_count, videoByRecording, conversationByRecording))
     .join("");
 
   el.tagsSection.hidden = !data.tags.length;
@@ -117,6 +134,19 @@ function render(data) {
         <span class="tag-chip">
           <span class="tag-chip__name"><i class="strip__swatch vc--${escapeHtml(entry.color)}"></i> ${escapeHtml(entry.name)}</span>
           <span class="tag-chip__counts">${entry.span_count} in ${entry.recording_count}</span>
+        </span>`
+    )
+    .join("");
+
+  const conversation = data.conversation || [];
+  el.conversationSection.hidden = !conversation.length;
+  el.conversationCount.textContent = `${conversation.length}`;
+  el.conversationRail.innerHTML = conversation
+    .map(
+      (entry) => `
+        <span class="tag-chip">
+          <span class="tag-chip__name"><i class="strip__swatch vc--${escapeHtml(entry.color)}"></i> ${escapeHtml(entry.name)}</span>
+          <span class="tag-chip__counts">${entry.highlight_count} in ${entry.recording_count}</span>
         </span>`
     )
     .join("");

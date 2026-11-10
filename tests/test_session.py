@@ -314,3 +314,67 @@ def test_your_own_unreadable_file_is_still_kept_aside_before_you_write(tmp_path)
 
     assert (mine.parent / "quotes.json.corrupt").read_text() == "{broken"
     assert len(json.loads(mine.read_text())["highlights"]) == 1
+
+
+def _chat(folder):
+    records = [{"record_type": "message", "conversation_id": "c1", "turn": 0, "version": 0, "role": r, "text": t}
+               for r, t in (("user", "hi"), ("assistant", "hello"))]
+    (folder / "conversation.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+
+
+def test_payload_includes_conversation(tmp_path):
+    (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX)
+    _chat(tmp_path)
+    recording = open_recording(tmp_path)
+
+    assert recording.summary()["has_conversation"] is True
+    assert recording.summary()["conversation_count"] == 0
+    assert recording.payload()["conversation"]["order"]
+    assert recording.payload()["conversation_highlights"] == []
+
+
+def test_payload_without_file(tmp_path):
+    (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX)
+    recording = open_recording(tmp_path)
+
+    assert recording.summary()["has_conversation"] is False
+    assert recording.payload()["conversation"] is None
+    assert recording.payload()["conversation_highlights"] == []
+
+
+def test_highlights_kept_without_file(tmp_path):
+    (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX)
+    folder = tmp_path / "coders" / "ann"
+    folder.mkdir(parents=True)
+    record = {"id": "h1", "text": "hi", "start_message_id": "c1:0:0:user", "start_char_offset": 0,
+              "end_message_id": "c1:0:0:user", "end_char_offset": 2, "color": "teal", "codes": []}
+    (folder / "conversation_highlights.json").write_text(json.dumps({"version": 1, "highlights": [record]}))
+
+    payload = open_recording(tmp_path).payload()
+
+    assert [h["id"] for h in payload["conversation_highlights"]] == ["h1"]
+    assert payload["conversation"] is None
+
+
+def test_refresh_rereads_conversation(tmp_path):
+    (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX)
+    recording = open_recording(tmp_path)
+    assert recording.conversation is None
+
+    _chat(tmp_path)
+    recording.refresh()
+
+    assert recording.conversation is not None
+
+
+def test_common_sets_include_conversation(tmp_path):
+    from subtitle_search.session import RecordingRegistry
+
+    (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX)
+    registry = RecordingRegistry()
+    recording = registry.add_folder(tmp_path)
+    sets = list(registry._common_sets())
+
+    assert registry.books.common_conversation in sets
+    assert all(s in sets for s in recording.common_conversation.sets())
+    assert registry.books.conversation("common") is registry.books.common_conversation

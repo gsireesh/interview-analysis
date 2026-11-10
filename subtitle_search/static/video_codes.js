@@ -6,9 +6,11 @@
  * playhead, and in the List tab.
  *
  * Imported spans come from the study session's diary (see imported.py). They
- * belong to no coder and are read-only: a coder copies one into their own row to
- * change it. Their row carries the import's status and the shared offset that
- * lines it up with the video.
+ * belong to no coder: any coder may move a span's start and end, for everyone,
+ * but its code and note stay as imported; a coder copies one into their own row
+ * to do more with it. Their row carries the import's status and the shared offset that
+ * lines it up with the video. A toggle beside the zoom hides that row, in this
+ * browser and across recordings; the List tab still lists imported spans.
  *
  * Marking is `i` for in and `o` for out, at the playhead. Each coder has their
  * own video codebook; a code can carry its own key, which closes an open span
@@ -26,6 +28,8 @@ const esc = escapeHtml;
 //: How much of the recording the code rows show at once, in seconds.
 const WINDOW_KEY = "subtitle-search:tierWindow";
 const WINDOWS = [10, 20, 30, 60, 120, 300, 600, 1800];
+//: Whether the Imported row is hidden, in this browser, in every recording.
+const IMPORTED_HIDDEN_KEY = "subtitle-search:importedHidden";
 const ROW_H = 22;
 
 export function initVideoCodes(ctx) {
@@ -35,6 +39,7 @@ export function initVideoCodes(ctx) {
     reserved: [],
     spans: ctx.data.video_codes || [],
     imported: ctx.data.imported || { status: "none", offset: 0 },
+    importedHidden: recall(IMPORTED_HIDDEN_KEY) === "true",
     pending: null,     // session time of an `i` not yet closed by `o`
     out: null,         // session time of that `o`, while its code is being chosen
     filter: null,      // code id the list is narrowed to
@@ -71,6 +76,12 @@ export function initVideoCodes(ctx) {
     }
   }, true);
   ctx.el.vcZoom?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-imported-toggle]")) {
+      ctx.vc.importedHidden = !ctx.vc.importedHidden;
+      remember(IMPORTED_HIDDEN_KEY, ctx.vc.importedHidden);
+      renderTiers(ctx);
+      return;
+    }
     const step = event.target.closest("[data-zoom]")?.dataset.zoom;
     if (!step) return;
     const i = WINDOWS.indexOf(ctx.vc.window) + (step === "in" ? -1 : 1);
@@ -145,6 +156,8 @@ const codeOf = (ctx, id) => ctx.vc.codes.find((c) => c.id === id);
 const shownSpans = (ctx) => ctx.vc.spans.filter(visibleNow);
 //: You code with your own video codes in every mode.
 const myCodes = (ctx) => ctx.vc.codes.filter(isMine);
+//: Whose span's times you may move: your own, and imported ones, which anyone may retime.
+const retimable = (span) => isMine(span) || isImported(span);
 const whoLabel = (span) => (isMine(span) ? "" : ` · ${nameOf(span.coder)}`);
 
 function renderAll(ctx) {
@@ -401,7 +414,7 @@ function stack(spans) {
  * it has anything, then you, then other coders in collaborative mode -- over a stretch of the recording that follows
  * the playhead. A span too short for its name is cut off with an ellipsis; hover
  * shows the code, the coder and the times. Click a span to go to it, or empty
- * space to go to that moment; drag the ends of your own spans to move them. */
+ * space to go to that moment; drag the ends of your own or imported spans to move them. */
 
 const durationOf = (ctx) => ctx.data?.duration || 1;
 const shown = (ctx) => Math.min(ctx.vc.window, durationOf(ctx));
@@ -430,7 +443,7 @@ function tickStep(win) {
 function coderRows(ctx) {
   const spans = shownSpans(ctx);
   const rows = [];
-  if (ctx.vc.imported.status !== "none") {
+  if (ctx.vc.imported.status !== "none" && !ctx.vc.importedHidden) {
     const warn = ctx.vc.imported.status === "ambiguous" || ctx.vc.imported.anchor === "first_event" ? " ⚠" : "";
     rows.push({
       label: `<button type="button" class="tier__imported" data-imported title="Import status and offset">${coderTag("imported")} Imported${warn}</button>`,
@@ -452,7 +465,12 @@ function renderTiers(ctx) {
   if (!host || !ctx.vc) return;
   if (ctx.el.vcZoom) {
     const win = shown(ctx);
+    const hidden = ctx.vc.importedHidden;
     ctx.el.vcZoom.innerHTML =
+      (ctx.vc.imported.status !== "none"
+        ? `<button type="button" class="vc-imported-toggle" data-imported-toggle aria-pressed="${!hidden}"` +
+          ` title="${hidden ? "Show" : "Hide"} the Imported row, in every recording">⇣ Imported</button>`
+        : "") +
       `<button type="button" data-zoom="in" aria-label="Show less time">−</button>` +
       `<span>${formatTime(ctx.vc.from)}–${formatTime(ctx.vc.from + win)}</span>` +
       `<button type="button" data-zoom="out" aria-label="Show more time">+</button>`;
@@ -476,7 +494,7 @@ function renderTiers(ctx) {
           const right = Math.min(100, pctOf(ctx, span.end));
           // Only a real end is draggable: a span running past the edge of the
           // stretch shown is cut off there, and that cut is not its end.
-          const edges = isMine(span)
+          const edges = retimable(span)
             ? (span.start >= from ? `<span class="vc-bar__edge" data-edge="start"></span>` : "") +
               (span.end <= from + win ? `<span class="vc-bar__edge" data-edge="end"></span>` : "")
             : "";
@@ -501,7 +519,7 @@ function renderTiers(ctx) {
 }
 
 /* Click a span to go there, or an empty stretch to go to that moment; drag
- * either end of your own span to move that end. */
+ * either end of your own or an imported span to move that end. */
 function onTierPointer(ctx, event) {
   const lane = event.target.closest(".tier__lane");
   if (!lane || lane.classList.contains("tier__ruler")) return;
@@ -514,7 +532,7 @@ function onTierPointer(ctx, event) {
   }
   const span = ctx.vc.spans.find((s) => s.id === bar.dataset.span);
   if (!span) return;
-  const edge = isMine(span) ? event.target.closest(".vc-bar__edge")?.dataset.edge : null;
+  const edge = retimable(span) ? event.target.closest(".vc-bar__edge")?.dataset.edge : null;
   if (!edge) {
     seek(ctx, span.start);
     openSpanPopup(ctx, span, bar);
@@ -565,7 +583,8 @@ function onTierPointer(ctx, event) {
 /* -------------------------------------------------------- span pop-up -- */
 
 // Clicking a span on the rows opens this beside it: your own span can be
-// recoded, noted or deleted; anyone else's is shown read-only.
+// recoded, noted or deleted; an imported one retimed or copied to your row;
+// anyone else's is shown read-only.
 function closeSpanPopup() {
   const pop = document.getElementById("vc-pop");
   // Closing saves a note or time still being typed, so a click away never drops it.
@@ -604,18 +623,23 @@ function openSpanPopup(ctx, span, bar) {
       <time>${formatTime(now.start)}–${formatTime(now.end)}</time>
       <span class="vc-item__len">${formatDuration(now.end - now.start)}</span>`;
   };
-  pop.innerHTML = `<div class="vc-pop__head">${head()}</div>` + (own
-    ? `<div class="vc-pop__times">
+  const imported = isImported(span);
+  const timesHtml = `<div class="vc-pop__times">
         <label>Start <input type="text" data-time="start" value="${clockText(span.start)}" spellcheck="false"></label>
         <label>End <input type="text" data-time="end" value="${clockText(span.end)}" spellcheck="false"></label>
-      </div>
+      </div>`;
+  const noteText = span.note ? `<p class="quote__note-text">${esc(span.note)}</p>` : "";
+  pop.innerHTML = `<div class="vc-pop__head">${head()}</div>` + (own
+    ? `${timesHtml}
       <select class="vc-item__code" aria-label="Video code">${myCodes(ctx)
         .map((c) => `<option value="${c.id}"${c.id === span.code_id ? " selected" : ""}>${esc(c.name)}</option>`)
         .join("")}</select>
       <textarea class="quote__note" rows="2" placeholder="Note">${esc(span.note || "")}</textarea>
       <button class="btn btn--danger" type="button" data-pop="delete">Delete</button>`
-    : (span.note ? `<p class="quote__note-text">${esc(span.note)}</p>` : "") +
-      (isImported(span) ? `<button class="btn" type="button" data-pop="copy">Copy to my row</button>` : ""));
+    : imported
+      ? `${timesHtml}${noteText}<p class="vc-pop__hint">New times are shared with every coder.</p>
+        <button class="btn" type="button" data-pop="copy">Copy to my row</button>`
+      : noteText);
   document.body.appendChild(pop);
 
   const r = bar.getBoundingClientRect();
@@ -623,21 +647,13 @@ function openSpanPopup(ctx, span, bar) {
   const below = r.bottom + 4;
   pop.style.top = `${below + pop.offsetHeight > innerHeight ? Math.max(8, r.top - pop.offsetHeight - 4) : below}px`;
 
-  if (!own) {
-    pop.querySelector('[data-pop="copy"]')?.addEventListener("click", () => {
-      closeSpanPopup();
-      copySpan(ctx, live());
-    });
-    return;
-  }
-  pop.querySelector("select").addEventListener("change", async (event) => {
-    await patchSpan(ctx, span.id, { code_id: event.target.value });
-    pop.querySelector(".vc-pop__head").innerHTML = head();
+  if (!own && !imported) return;
+  pop.querySelector('[data-pop="copy"]')?.addEventListener("click", () => {
+    pop.save?.();
+    pop.save = null;
+    closeSpanPopup();
+    copySpan(ctx, live());
   });
-  const note = pop.querySelector("textarea");
-  const saveNote = () => {
-    if (note.value !== (live().note || "")) patchSpan(ctx, span.id, { note: note.value });
-  };
   const saveTime = async (input) => {
     const which = input.dataset.time;
     const current = live();
@@ -665,15 +681,27 @@ function openSpanPopup(ctx, span, bar) {
       if (event.key === "Enter") input.blur();
     });
   }
-  pop.save = () => {
-    saveNote();
-    times.forEach(saveTime);
-  };
   // A drag moves the span under the open pop-up; show its new times, or
   // closing would save the old ones back.
   pop.refresh = () => {
     for (const input of times) input.value = clockText(live()[input.dataset.time]);
     pop.querySelector(".vc-pop__head").innerHTML = head();
+  };
+  if (imported) {
+    pop.save = () => times.forEach(saveTime);
+    return;
+  }
+  pop.querySelector("select").addEventListener("change", async (event) => {
+    await patchSpan(ctx, span.id, { code_id: event.target.value });
+    pop.querySelector(".vc-pop__head").innerHTML = head();
+  });
+  const note = pop.querySelector("textarea");
+  const saveNote = () => {
+    if (note.value !== (live().note || "")) patchSpan(ctx, span.id, { note: note.value });
+  };
+  pop.save = () => {
+    saveNote();
+    times.forEach(saveTime);
   };
   note.addEventListener("change", saveNote);
   pop.querySelector('[data-pop="delete"]').addEventListener("click", () => {

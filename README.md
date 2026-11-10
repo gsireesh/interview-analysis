@@ -21,8 +21,8 @@ It opens `http://127.0.0.1:8765`.
 ## The workflow
 
 **Download → anonymize → analyze.** Three steps, and the middle one is why the
-folder layout matters: the anonymizer is told exactly one thing, and it reads it
-off the folder name.
+folder layout matters: the anonymizer reads each participant's ID off their
+folder name.
 
 ```
 study/
@@ -48,13 +48,14 @@ python scripts/anonymize_zoom.py raw/ anonymized/
 subtitle-search anonymized/                                   # 3. read it
 ```
 
-**One folder per participant, and the folder name is the participant ID.** That
-is the whole of what you tell the script; everything else it works out from the
-transcripts inside. `raw/P01/` becomes `anonymized/P01/`, and `P01` is what
-replaces that person's name wherever it appears. Sub-folders are walked and the
-shape is preserved, so whatever Zoom handed you can go in as it came — the tool
-reads those `GMT…` timestamps to lay [interrupted
-sessions](#interrupted-sessions) end to end.
+**One folder per participant, and the folder name is the participant ID.** The
+script works out everything else from the transcripts inside, unless
+`--interviewer` names who interviewed ([Who gets which label](#who-gets-which-label)).
+`raw/P01/` becomes `anonymized/P01/`, and `P01` is what replaces that person's
+name wherever it appears. The script walks sub-folders and keeps their shape. The
+reader joins the transcripts in one folder into one session, using their `GMT…`
+timestamps to lay [interrupted sessions](#interrupted-sessions) end to end;
+transcripts in separate sub-folders open as separate recordings.
 
 **The pass replaces speaker names, and nothing else.** In the attribution, in
 the body of the transcript, and in filenames. Places, employers, job titles and
@@ -81,15 +82,15 @@ Tiered, so the part you use daily has the fewest ways to break:
 
 | | |
 |---|---|
-| core | `fastapi`, `uvicorn`, `rapidfuzz` — reading, correcting, quoting |
-| `analysis` | `numpy`, `scikit-learn` — the map, graph and signals |
+| core | `fastapi`, `uvicorn`, `rapidfuzz`, `markdown-it-py` — reading, correcting, quoting, showing the chat |
+| `analysis` | `numpy`, `scikit-learn` — the map and signals |
 | `neural` | `sentence-transformers` — paraphrase-aware similarity |
 | `align` | `torch`, `transformers` — [measured word timings](#word-timings) |
-| `dev` | `pytest`, `httpx` |
+| `dev` | `pytest`, `httpx`, `watchfiles` |
 
 ```bash
 uv sync --all-extras                          # everything
-pip install -e '.[analysis,neural,align]'     # the pip equivalent
+pip install -e '.[analysis,neural,align,dev]' # the pip equivalent
 ```
 
 `align` also wants `ffmpeg` on `PATH`, which is not a Python package and so cannot
@@ -98,7 +99,8 @@ be pinned in the lockfile.
 The extras are genuinely optional: `semantics.py` and `alignment.py` import their
 heavy dependencies *inside* their functions, so the app starts, the reader and
 library work, and only the features that need them return a 503 that names the
-fix. Every rung degrades to the one below — UMAP to t-SNE to PCA, the language
+fix. Every rung degrades to the one below — UMAP (only if you install
+`umap-learn`; no extra provides it) to t-SNE to PCA, the language
 model to word overlap, measured timings to interpolated ones.
 
 Every requirement carries an upper bound, and `uv.lock` pins the resolved graph
@@ -151,7 +153,7 @@ marker says which part is starting but not how long the gap was.
 
 The rule is about your data, not about your dependencies. **Nothing from a
 recording — audio, transcript, quotes, notes, codes — is ever sent anywhere.** The
-server binds to `127.0.0.1` only, and the page has no CDN assets, web fonts, or
+server binds to `127.0.0.1` unless `--host` says otherwise, and the page has no CDN assets, web fonts, or
 analytics, so it is drawn entirely with fonts already on your machine and nothing
 about what you are reading is observable off it.
 
@@ -177,8 +179,8 @@ still sounds like that person rather than a cartoon — tone is half of why the
 recording is here. The speed is remembered between sessions, survives crossing
 from one recording into the next, and the themes page plays quotes at it too.
 
-The reader has three panes: the video with its video code rows, the transcript,
-and the text codes. Drag a divider (or focus it and use the arrow keys) to
+The reader has three columns: the video with its video code rows and the
+participant's [conversation](#conversation-codes), the transcript, and the text codes. Drag a divider (or focus it and use the arrow keys) to
 resize; double-click resets it. – collapses a pane to a labelled strip; click
 the strip to reopen it. Sizes are remembered per browser.
 
@@ -198,13 +200,13 @@ playback**, and a "Follow along" button appears to re-attach.
 
 | | |
 |---|---|
-| `j` / `k` | previous / next block |
+| `j` / `k` | next / previous block |
 | `Space` | play / pause |
 | `←` / `→` | seek ∓5s |
 | `/` | search |
 | `e` | correct the current block |
-| `h` | save the selection as a quote |
-| `c` | copy the selection with speaker and timestamp |
+| `h` | save the selection as a quote, or in the Conversation pane as a highlight |
+| `c` | copy the selection with speaker and timestamp, or in the Conversation pane with speaker and turn |
 | `f` | toggle following |
 | `[` / `]` | slower / faster |
 | `s` | break this block into its captions |
@@ -486,16 +488,34 @@ span under the playhead, with an Undo. Spans may overlap.
 
 **Where they show.** Never on the words.
 
-- **Rows**, under the video: one row per coder (✓ Common when it has spans, you,
-  then others in collaborative mode) over a zoomable window that follows the
+- **Rows**, under the video: one row per coder (⇣ Imported when the recording
+  has a diary, ✓ Common when it has spans, you, then others in collaborative mode) over a zoomable window that follows the
   playhead. Click a span to seek there and open a pop-up to change its code or its start and end times (typed as `1:02.5`), add a note, or delete it (read-only for others' spans). Drag an end of your own span to move it. A name
   too long for its span is cut off; hover shows code, coder and times.
-- **List**, the tab beside Rows: every span with its code, times, note, and a
-  menu to recode or delete it.
+- **List**, the tab beside Rows: every span with its code, times and note; your
+  own have a dropdown to recode and ✕ to delete.
 
 **Watching without sound.** **🔊** in the video controls (or `m`) mutes; the
 setting is remembered. Collapse the transcript and text code panes for a
 video-only view.
+
+**Imported codes.** A study diary (`<session_id>_diary.jsonl`, from the study
+interface) in a recording folder becomes the ⇣ Imported row the first time a coder
+opens the recording. It is imported once; replacing the file changes nothing. A
+folder with several diaries imports none.
+
+- Each diary event is a span. A start/end pair runs between the two (`scroll`,
+  `prompt_typing`, `read_aloud`, `response_generation`, `conversation`, `off_tab`);
+  any other event gets 1 s. The event's detail is the note.
+- Events outside the recording, in a gap between parts, or without a timestamp,
+  and repeated or unreadable diary rows, are left out. Click the row's label to see how many, and to set the offset that
+  shifts the whole row for every coder. Without Zoom's `GMT…` start time in the
+  file names, the first event is placed at 0:00 for the offset to line up.
+- Any coder can type or drag an imported span's start and end, for everyone; the
+  offset applies on top. Its code and note cannot be changed, nor the span deleted.
+- **Copy to my row** in the pop-up makes it your own span, under your code of the
+  same name.
+- **⇣ Imported** beside the zoom hides the row in this browser, in every recording.
 
 **The codebook.** Each coder has their own; edit it from the strip's ⋯ menu or
 the [Codebook page](#coders-modes-and-common-codes). Spans refer to a code by
@@ -506,30 +526,48 @@ into another, or remove its spans first. Keys the pages already use (`j`, `k`,
 **Storage.** Your codebook is `<study>/coders/<you>/video_codebook.json`; your
 spans are `<recording>/coders/<you>/video_codes.json`, in session seconds, so a
 span can cross an interruption and correcting a caption never moves one.
+Imported spans and their offset are `<recording>/imported_video_codes.json`, and
+imported codes `<study>/imported_video_codebook.json`; both are shared files.
+
+## Conversation codes
+
+Conversation codes code the participant's chat with the AI, from the study
+interface's `conversation.jsonl` in the recording folder. They are a third
+codebook, never merged with text or video codes.
+
+- **The file.** `scripts/anonymize_zoom.py` does not copy it; put it in the participant folder yourself. Without it the Conversation pane says so.
+- **The pane.** Under the video code rows. Messages are drawn as the study interface draws them: retries, edits and cleared conversations are marked, and abandoned exchanges sit behind a dashed rule.
+- **Highlighting.** Select text inside one message or across several, then pick a colour in the quote bar. The card sits beside the messages; type in its field to add codes.
+- **Words not found.** A highlight is stored by message and character position. If the words there no longer match, for example after `conversation.jsonl` is replaced, the highlight is kept, not painted, and its card is marked "words not found".
+- **Storage.** Your codebook is `<study>/coders/<you>/conversation_codebook.json`; your highlights are `<recording>/coders/<you>/conversation_highlights.json`.
 
 ## Coders, modes and common codes
 
 - **Login.** On first open, pick your name or type a new one; initials are made
   from it. There is no password. Click your name in the header to switch.
 - **Modes.** The header's switch applies to every page. *Independent* shows your
-  work and common codes. *Collaborative* adds everyone else's, labelled with
+  work, common codes and imported codes. *Collaborative* adds everyone else's, labelled with
   initials and read-only.
-- **Refresh.** ↻ Refresh reads what collaborators have synced, pushes your common
+- **Sync.** ↻ Sync reads what collaborators have synced, pushes your common
   changes to the shared files, and collects items returned to you. The header
   shows when the folder was last read and warns about sync conflict copies.
 - **Codebook page** (`/codebook`). One codebook at a time, list beside the code
   page: description, the themes holding the code, and every quote or span that
-  carries it, with checkboxes to remove them in bulk.
+  carries it, with its note in a separate column and checkboxes to remove them in bulk. Imported codes are listed
+  last, with their spans in every recording at their current times.
+  The list and the page scroll separately. Search the list by code name, and the
+  table by quote or note; ▾ on Recording and Coder filters the rows, and Select all
+  ticks only the rows shown.
 - **Move to common** (⋯ menu). Confirm the code is final and give a description.
   It becomes a new common code, or merges into an existing one; a name clash asks
-  merge or rename. Its quotes or spans move with it. Exact duplicates from two
-  coders combine: text on the same words, video with both ends within 0.5 s.
-  Anyone can edit common codes.
+  merge or rename. Its quotes, spans or highlights move with it. Exact duplicates from two
+  coders combine: text and conversation on the same words, video with both ends within 0.5 s.
+  Anyone can edit common codes, and anyone can move an imported code.
 - **Using a common code** in independent mode creates your own code of the same
   name; move it to common later to merge.
 - **Return to coders** (⋯ menu on a common code). Each contributor gets their
-  quotes or spans back under their own code with the common code's name and
-  description. Common codes keep a History of moves, returns, edits, deletions
+  quotes, spans or highlights back under their own code with the common code's name and
+  description; imported spans go back to the Imported row. Common codes keep a History of moves, returns, edits, deletions
   and removals.
 - **Themes** follow the same modes. [Common themes](#themes-analysis-across-recordings)
   hold only common codes; a theme can be moved to common once all its codes are.
@@ -624,7 +662,7 @@ levels deep, which is how these arrive). A folder whose transcript cannot be
 parsed is reported and skipped rather than taking the whole library down.
 
 The library lists every recording with its duration, speakers, quote count,
-text codes and video codes, following the mode switch, and searches every
+text, video and conversation codes, following the mode switch, and searches every
 transcript at once. Results link straight to the moment
 in the reader.
 
@@ -675,16 +713,20 @@ such as Box.
 pilots/                             ← point the tool here
   coders/<id>/                      ← one folder per coder, written only by that coder
     coder.json                      ← name and initials
-    text_codebook.json, video_codebook.json, themes.json, history.json
+    text_codebook.json, video_codebook.json, conversation_codebook.json, themes.json, history.json
     common/                         ← that coder's copy of the common files
-  common/                           ← shared common codes and themes, written on Refresh
+  common/                           ← shared common codes and themes, written on Sync
+  imported_video_codebook.json      ← imported codes, shared
   P'1/
     GMT…_Recording.mp4
     GMT…_Recording.transcript.vtt   ← each folder needs a .vtt to open
-    coders/<id>/quotes.json, video_codes.json, common/
-    common/                         ← shared common quotes, spans and returned items
+    coders/<id>/quotes.json, video_codes.json, conversation_highlights.json, common/
+    common/                         ← shared common quotes, spans, highlights and returned items
+    <session_id>_diary.jsonl        ← study diary, imported as the Imported row
+    conversation.jsonl              ← participant's chat, shown in the Conversation pane
+    imported_video_codes.json       ← imported spans and offset, shared
     session.words.json              ← measured word timings
-    audio…_original.vtt             ← backup written on the first correction
+    GMT…_Recording.transcript_original.vtt  ← backup written on the first correction
 ```
 
 Folders without a `.vtt` are skipped, and Google Docs shortcuts (`.gdoc`) are
@@ -704,7 +746,7 @@ Point it at the **study folder**, not a participant folder. Opened alone, a
 participant folder has its own coders and codebooks.
 
 To see what a collaborator saved, wait for Drive to finish syncing, then press
-↻ Refresh.
+↻ Sync.
 
 ### Working at the same time
 
@@ -712,16 +754,18 @@ To see what a collaborator saved, wait for Drive to finish syncing, then press
   files, and common changes go to your copy first.
 - Transcript corrections are shared. Two people correcting the same recording
   at once can conflict; take turns.
+- Imported spans and their offset are shared the same way: take turns changing
+  one recording's.
 - If a file like `… (1).json` appears, the sync client kept two versions. The
   header warns about those beside the common files. Compare them by hand before deleting either.
 
 ## Themes: analysis across recordings
 
-`/themes` groups codes into themes, in several views. A theme holds codes, text
-and video; their quotes and spans come along as evidence. A code can be in
+`/themes` groups codes into themes, in several views. A theme holds codes, text,
+video and conversation; their quotes, spans and highlights come along as evidence. A code can be in
 several themes. The canvas and the board show the same themes.
 
-- **Your themes** hold your codes and common codes. Collaborative mode adds
+- **Your themes** hold your codes, imported codes and common codes. Collaborative mode adds
   other coders' themes, read-only.
 - **Common themes** (✓) hold only common codes and anyone can edit them. ✓ on
   your theme moves it to common, or merges it into a common theme, once all its
@@ -737,8 +781,8 @@ the analysis.
 - **New area** makes a theme in the middle of the view.
 - The **tray** on the left lists codes not yet on the canvas. Drag one onto the
   plane. A code card shows name, colour, ✓ or initials, and count; ▶ marks a
-  video code. Open a card to read its quotes and spans, by speaker then time;
-  **↗** opens each in the reader.
+  video code and ❝ a conversation code. Open a card to read its quotes and spans, by speaker then time,
+  each linked to the reader; **↗** opens the code's page.
 - Drag an area **by the strip across the top of its title bar** and its cards
   move with it.
 - **Resize** from the bottom-right corner; cards outside the new box are pulled
@@ -754,7 +798,7 @@ the analysis.
 ### Theme names do not shrink
 
 An area's title bar stays the same size at any zoom. On a narrow bar the note and
-recording spread go first, then the count, then the ▶ ⊞ ✕ buttons. A long name
+recording spread go first, then the count, then the ▷ ⊞ ✓ ✕ buttons. A long name
 wraps, and shrinks (never below 9px) only when one word is wider than the area.
 
 ### Grid, which changes nothing
@@ -766,15 +810,16 @@ card.
 
 ### Filters
 
-The tray narrows by text (name and description), kind (text or ▶ video, used
+The tray narrows by text (name and description), kind (text, ▶ video or ❝ conversation, used
 or not yet used), recording, colour, and whether the code has a description. It
-orders by recording, by count, or by how many recordings a code appears in.
+orders alphabetically, by count, or by how many recordings a code appears in.
 Filtering also highlights matching cards already on the plane.
 
 **A code can be on the canvas in two areas.** Alt-drag (or **Also place in…**)
 leaves the card where it is and adds a second card elsewhere.
 
-Every **↗** opens the transcript in a **new tab**, keeping your place here.
+Every **↗** opens in a **new tab**, keeping your place here: a code card's opens
+the code's page, a quote's opens the transcript.
 
 Without a mouse: tab to a code in the tray and press enter to place it; tab to a
 card and the panel under the tray moves it between themes, arrow keys nudge it
@@ -787,8 +832,8 @@ the browser.
 ### Board — columns, for when there are few enough to see
 
 The same themes as columns. Drag a card, or use its menu to move it between your
-themes and common themes. Choosing a theme on the board moves the card out of
-its other themes; use the canvas to put a code in two. Each column shows how
+themes and common themes. Moving a card on the board moves only that column's
+card; other themes holding the code keep theirs. Each column shows how
 many recordings it draws on.
 
 ### Matrix — for when they do
@@ -812,7 +857,7 @@ cheapest signal that a codebook needs consolidating.
 ### Map — for arguing with your codebook
 
 ```bash
-pip install -e '.[analysis]'          # the map, graph and signals
+pip install -e '.[analysis]'          # the map and signals
 pip install -e '.[analysis,neural]'   # + understands paraphrase
 ```
 
@@ -831,7 +876,7 @@ broken"* are the same complaint. The **language model** can, and the difference
 is stark; on the same pair of quotes about consent and cloud storage, word
 overlap scores `0.00` and the model scores `0.34`.
 
-The model is the one thing in this tool that touches the network: it downloads
+The model is the one thing in the analysis views that touches the network: it downloads
 once, then lives on your machine, and vectors are cached in
 `library.embeddings.npz` so it is paid for once. **Your quotes are never sent
 anywhere** — encoding happens in this process.
@@ -863,6 +908,7 @@ Any theme, code, or cell can be played straight through: each quote or span in
 turn, in the recording it came from, stopping at its own end. Tone is half of what a quote
 means and it does not survive being written down — being able to hear a theme
 rather than only read it is the reason the recordings are still attached.
+Conversation highlights have no time in the recording and are skipped.
 
 Your themes are stored in `<study>/coders/<you>/themes.json`; common themes in
 `<study>/common/themes.json` and `theme_cards.json`. A theme holds code
@@ -879,8 +925,8 @@ python scripts/anonymize_zoom.py raw/ anonymized/ --dry-run   # look first
 python scripts/anonymize_zoom.py raw/ anonymized/
 ```
 
-Media is copied verbatim. Transcripts are rewritten with `Sireesh Gururaja` and
-`Jordan Taylor` replaced by `interviewer`, and the participant replaced by the
+Media is copied verbatim. Transcripts are rewritten with the interviewers
+replaced by `interviewer 1`, `interviewer 2`, …, and the participant by the
 folder name. Names found in *filenames* are replaced the same way.
 
 Names come **only from speaker labels**. Nothing else is treated as a name, so
@@ -899,6 +945,7 @@ first speak:
 first speaker    -> interviewer 1
 second speaker   -> the participant (the folder name)
 third onwards    -> interviewer 2, interviewer 3, ...
+only speaker     -> unknown (unless named with --interviewer)
 ```
 
 That ordering assumes an interviewer opens. When it is wrong — the participant
@@ -909,7 +956,8 @@ python scripts/anonymize_zoom.py raw/ anonymized/ --interviewer "Ada Lovelace"
 ```
 
 Named speakers are interviewers wherever they fall, in every folder, and the
-participant becomes the first speaker not named. Someone named but never speaking
+participant becomes the first unnamed speaker after the opener (the opener only if
+no one else is unnamed), so name every interviewer. Someone named but never speaking
 is still replaced if they are mentioned aloud. Because labels are per-folder,
 `interviewer 2` is not necessarily the same person across folders unless you name
 them.
@@ -924,9 +972,8 @@ python scripts/anonymize_zoom.py raw/ anonymized/ --skip-single-speaker
 ```
 
 A transcript with only one voice usually means the recording captured one side of
-the call. The ordering rule would label that lone person the participant, which
-is as likely to be the interviewer talking to themselves — so this leaves those
-folders out entirely.
+the call. Without the flag that lone speaker is labelled `unknown`; with it, those
+folders are left out entirely.
 
 Labels are merged before counting, so a participant who rejoins as `Alex` after
 being `Alex Chen` is one speaker, not two. An interrupted session is counted
@@ -941,8 +988,9 @@ status stays zero.
 A folder produces **no output at all** rather than a partial result. Nothing is
 written until every file in it has passed, so a refusal never leaves
 half-anonymized files behind. A folder is refused when it has no transcript, when
-its output folder already has files (use `--force`), or when every speaker was
-named as an interviewer so no participant is left.
+its output folder already has files (use `--force`), when no speaker is detected,
+when every speaker was named as an interviewer so no participant is left, or when
+a mapped name survives replacement.
 
 Everything else is reported under `REVIEW` and still written, since deciding it
 needs a reader:
@@ -950,7 +998,7 @@ needs a reader:
 - a line that still looks like `Somebody: text` where `Somebody` was never
   detected as a speaker. Detection is deliberately conservative, so this catches
   both a faint name and an ordinary line like `Correction:`
-- a first name that is also a common word
+- a single name word (first name, surname or nickname) that is also a common word
 
 The exit status is non-zero if any folder was refused. Other folders still
 process, so one bad folder does not stop the run.
@@ -967,10 +1015,11 @@ Everything skipped is reported by name, so nothing disappears quietly.
 This is a first sweep over transcripts you are going to read anyway, not a
 substitute for reading them.
 
-Given names that are also ordinary words (`Mark`, `Summer`, `Rose`) are **not**
+Name words that are also ordinary words (`Mark`, `Summer`, `Rose`) are **not**
 replaced when they appear alone, because doing so would corrupt normal sentences
 — "please mark that down". The full name is still replaced, and the script prints
-which single names it left behind so your own pass knows where to look.
+which single names it left behind so your own pass knows where to look. Name
+words under three letters are also left alone, without a report.
 
 Zoom display names are pulled apart before matching, so
 `B.F. (Jim) Lightning, Brown U. USA` contributes `B.F. Lightning`, `Lightning`

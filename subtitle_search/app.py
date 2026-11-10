@@ -27,6 +27,7 @@ from .editing import (
 from .alignment import AlignmentError
 from .alignment import available as alignment_available
 from .codebook import CodebookError
+from .conversation_highlights import ConversationHighlightError, highlight_where
 from .common import COMMON, IMPORTED, ClashError, _record_history, claim_returns, history_for, move_code, return_code
 from .coders import CoderError
 from .highlights import COLORS, HighlightError
@@ -40,6 +41,7 @@ from .library import (
     code_packing_order,
     tag_index,
     untagged,
+    conversation_index,
     video_index,
     vocabulary,
 )
@@ -427,6 +429,49 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             raise HTTPException(status_code=404, detail="unknown highlight")
         return JSONResponse({"deleted": highlight_id})
 
+    @app.get("/api/recordings/{recording_id}/conversation-highlights")
+    def list_conversation_highlights(recording_id: str) -> dict:
+        recording = require(recording_id)
+        return {"highlights": recording.conversation_highlights.list()}
+
+    @app.post("/api/recordings/{recording_id}/conversation-highlights", status_code=201)
+    def create_conversation_highlight(recording_id: str, request: Request, payload: dict = Body(...)) -> dict:
+        coder = current_coder(request)
+        recording = require(recording_id)
+        try:
+            highlight = recording.conversation_highlights.create(coder, payload)
+        except ConversationHighlightError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"highlight": highlight}
+
+    @app.patch("/api/recordings/{recording_id}/conversation-highlights/{highlight_id}")
+    def update_conversation_highlight(recording_id: str, highlight_id: str, request: Request, payload: dict = Body(...)) -> dict:
+        coder = current_coder(request)
+        recording = require(recording_id)
+        try:
+            highlight = recording.conversation_highlights.update(coder, highlight_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown highlight") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ConversationHighlightError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"highlight": highlight}
+
+    @app.delete("/api/recordings/{recording_id}/conversation-highlights/{highlight_id}")
+    def delete_conversation_highlight(recording_id: str, highlight_id: str, request: Request) -> JSONResponse:
+        coder = current_coder(request)
+        recording = require(recording_id)
+        try:
+            deleted = recording.conversation_highlights.delete(coder, highlight_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown highlight") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="unknown highlight")
+        return JSONResponse({"deleted": highlight_id})
+
     # -- codebooks: each coder's text codes and video codes -----------------
 
     def owner_of(pairs, code_id: str) -> str:
@@ -627,13 +672,150 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
                                               "name": registry.books.common_video.get(code_id)["name"], "removed": removed})
         return {"removed": removed, **video_codebook_state()}
 
+    # -- the conversation codebook: codes put on highlights of a participant's chat --
+
+    def conversation_counts() -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for recording in registry.list():
+            for highlight in recording.conversation_highlights.list():
+                for code_id in highlight.get("codes") or []:
+                    counts[code_id] = counts.get(code_id, 0) + 1
+        return counts
+
+    def conversation_codebook_state() -> dict:
+        counts = conversation_counts()
+        return {
+            "codes": [
+                {**code, "coder": coder, "highlight_count": counts.get(code["id"], 0)}
+                for coder, code in registry.books.all_conversation()
+            ],
+            "colors": list(VIDEO_CODE_COLORS),
+        }
+
+    def highlight_row(recording: Recording, highlight: dict) -> dict:
+        """One highlight as a Codebook row: the highlight, where it is in the study, and its turns and speaker."""
+        try:
+            where = highlight_where(highlight)
+        except (ValueError, IndexError):
+            # A message id that cannot be parsed still lists its highlight, with no turn or speaker.
+            where = {"start_turn": None, "end_turn": None, "speaker": None}
+        # Display order in the chat, so rows within a recording read top to bottom; a message not in the chat sorts last.
+        order = recording.conversation.order if recording.conversation else []
+        start = highlight.get("start_message_id")
+        position = [order.index(start) if start in order else len(order), highlight.get("start_char_offset", 0)]
+        return {**highlight, **where, "position": position, "ref": f"{recording.id}:{highlight['id']}",
+                "highlight_id": highlight["id"], "recording_id": recording.id, "recording_title": recording.title}
+
+    @app.get("/api/library/conversation-codebook")
+    def get_conversation_codebook() -> dict:
+        return conversation_codebook_state()
+
+    @app.post("/api/library/conversation-codebook", status_code=201)
+    def add_conversation_code(request: Request, payload: dict = Body(...)) -> dict:
+        coder = current_coder(request)
+        try:
+            code = registry.books.conversation(coder).add(payload)
+        except CodebookError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"code": {**code, "coder": coder}, **conversation_codebook_state()}
+
+    @app.patch("/api/library/conversation-codebook/{code_id}")
+    def update_conversation_code(code_id: str, request: Request, payload: dict = Body(...)) -> dict:
+        coder, owner = editor_of(request, registry.books.all_conversation(), code_id)
+        try:
+            if owner == COMMON:
+                before = registry.books.common_conversation.get(code_id)
+                code = registry.books.common_conversation.update(code_id, payload, coder=coder)
+                record_edit(coder, "conversation", before, code)
+            else:
+                code = registry.books.conversation(coder).update(code_id, payload)
+        except CodebookError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"code": {**code, "coder": owner}, **conversation_codebook_state()}
+
+    @app.delete("/api/library/conversation-codebook/{code_id}")
+    def delete_conversation_code(code_id: str, request: Request) -> dict:
+        coder, owner = editor_of(request, registry.books.all_conversation(), code_id)
+        used = conversation_counts().get(code_id, 0)
+        if used:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{used} highlight{'s' if used != 1 else ''} still use this code -- remove it from them or merge it into another",
+            )
+        if owner == COMMON:
+            name = registry.books.common_conversation.get(code_id)["name"]
+            registry.books.common_conversation.remove(code_id, coder=coder)
+            _record_history(registry, coder, {"action": "deleted", "kind": "conversation", "code_id": code_id, "name": name})
+        else:
+            registry.books.conversation(coder).remove(code_id)
+        drop_from_themes(coder, owner, f"conversation:{code_id}")
+        return {"deleted": code_id, **conversation_codebook_state()}
+
+    @app.post("/api/library/conversation-codebook/{code_id}/merge")
+    def merge_conversation_code(code_id: str, request: Request, payload: dict = Body(...)) -> dict:
+        coder = own_code(request, registry.books.all_conversation(), code_id)
+        into = str(payload.get("into") or "")
+        book = registry.books.conversation(coder)
+        if into == code_id:
+            raise HTTPException(status_code=400, detail="a code cannot be merged into itself")
+        if book.get(into) is None:
+            raise HTTPException(status_code=400, detail="you can only merge into another of your own codes")
+        moved = sum(r.conversation_highlights.reassign_code(code_id, into) for r in registry.list())
+        book.remove(code_id)
+        registry.theme_store(coder).replace_ref(f"conversation:{code_id}", f"conversation:{into}")
+        return {"merged": code_id, "moved": moved, **conversation_codebook_state()}
+
+    @app.get("/api/library/conversation-codebook/{code_id}/applications")
+    def conversation_code_applications(code_id: str) -> dict:
+        owner_of(registry.books.all_conversation(), code_id)
+        return {
+            "applications": [
+                highlight_row(r, h)
+                for r in registry.list()
+                for h in r.conversation_highlights.list()
+                if code_id in (h.get("codes") or [])
+            ]
+        }
+
+    @app.get("/api/library/conversation-codebook/uncoded")
+    def uncoded_highlights() -> dict:
+        return {
+            "highlights": [
+                highlight_row(r, h)
+                for r in registry.list()
+                for h in r.conversation_highlights.list()
+                if not (h.get("codes") or [])
+            ]
+        }
+
+    @app.post("/api/library/conversation-codebook/{code_id}/applications/remove")
+    def remove_conversation_code_applications(code_id: str, request: Request, payload: dict = Body(...)) -> dict:
+        """Take the code off the chosen highlights. The highlights stay, with anything else on them."""
+        coder, owner = editor_of(request, registry.books.all_conversation(), code_id)
+        removed = 0
+        for ref in payload.get("refs") or []:
+            recording, highlight_id = split_ref(ref)
+            if owner == COMMON:
+                removed += int(bool(recording.common_conversation.remove_code(coder, highlight_id, code_id)))
+                continue
+            highlight = next((h for h in recording.conversation_highlights.list() if h["id"] == highlight_id), None)
+            if highlight is None or code_id not in (highlight.get("codes") or []):
+                continue
+            recording.conversation_highlights.update(coder, highlight_id, {"codes": [c for c in highlight["codes"] if c != code_id]})
+            removed += 1
+        if owner == COMMON and removed:
+            _record_history(registry, coder, {"action": "removed", "kind": "conversation", "code_id": code_id,
+                                              "name": registry.books.common_conversation.get(code_id)["name"], "removed": removed})
+        return {"removed": removed, **conversation_codebook_state()}
+
     # -- common codes: moving agreed codes in, and giving them back -------------
 
     def pairs_for(kind: str):
-        return registry.books.all_text() if kind == "text" else registry.books.all_video()
+        return {"text": registry.books.all_text, "video": registry.books.all_video,
+                "conversation": registry.books.all_conversation}[kind]()
 
     def state_for(kind: str) -> dict:
-        return text_codebook_state() if kind == "text" else video_codebook_state()
+        return {"text": text_codebook_state, "video": video_codebook_state, "conversation": conversation_codebook_state}[kind]()
 
     def move(kind: str, code_id: str, request: Request, payload: dict, dry_run: bool) -> dict:
         # Imported codes belong to no coder, so anyone may move one; otherwise only the code's owner.
@@ -673,6 +855,10 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
     def move_video_code(code_id: str, request: Request, dry_run: bool = Query(False), payload: dict = Body(...)):
         return move("video", code_id, request, payload, dry_run)
 
+    @app.post("/api/library/conversation-codebook/{code_id}/move")
+    def move_conversation_code(code_id: str, request: Request, dry_run: bool = Query(False), payload: dict = Body(...)):
+        return move("conversation", code_id, request, payload, dry_run)
+
     @app.post("/api/library/text-codebook/{code_id}/return")
     def return_text_code(code_id: str, request: Request) -> dict:
         return give_back("text", code_id, request)
@@ -681,6 +867,10 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
     def return_video_code(code_id: str, request: Request) -> dict:
         return give_back("video", code_id, request)
 
+    @app.post("/api/library/conversation-codebook/{code_id}/return")
+    def return_conversation_code(code_id: str, request: Request) -> dict:
+        return give_back("conversation", code_id, request)
+
     @app.get("/api/library/text-codebook/{code_id}/history")
     def text_code_history(code_id: str) -> dict:
         return {"entries": history_for(registry, "text", code_id)}
@@ -688,6 +878,10 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
     @app.get("/api/library/video-codebook/{code_id}/history")
     def video_code_history(code_id: str) -> dict:
         return {"entries": history_for(registry, "video", code_id)}
+
+    @app.get("/api/library/conversation-codebook/{code_id}/history")
+    def conversation_code_history(code_id: str) -> dict:
+        return {"entries": history_for(registry, "conversation", code_id)}
 
     @app.get("/api/common/status")
     def common_status() -> dict:
@@ -871,6 +1065,7 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
             "tags": tag_index(quotes),
             "cooccurrence": cooccurrence(quotes, minimum=1),
             "video": video_index(registry, *view(request)),
+            "conversation": conversation_index(registry, *view(request)),
             "colors": list(COLORS),
         }
 
@@ -909,17 +1104,21 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
         """What a theme of this owner may hold: common codes, plus the owner's own and the imported ones."""
         refs = {f"text:{c['id']}" for c in registry.books.common_text.list()}
         refs |= {f"video:{c['id']}" for c in registry.books.common_video.list()}
+        refs |= {f"conversation:{c['id']}" for c in registry.books.common_conversation.list()}
         if owner != COMMON:
             refs |= {f"text:{c['id']}" for c in registry.books.text(owner).list()}
             refs |= {f"video:{c['id']}" for c in registry.books.video(owner).list()}
             refs |= {f"video:{c['id']}" for c in registry.books.imported_video.list()}
+            refs |= {f"conversation:{c['id']}" for c in registry.books.conversation(owner).list()}
         return refs
 
     def codebooks_readable(owner: str) -> bool:
-        common = not (registry.books.common_text.incomplete or registry.books.common_video.incomplete)
+        common = not (registry.books.common_text.incomplete or registry.books.common_video.incomplete
+                      or registry.books.common_conversation.incomplete)
         if owner == COMMON:
             return common
-        return common and not (registry.books.text(owner).unreadable or registry.books.video(owner).unreadable)
+        return common and not (registry.books.text(owner).unreadable or registry.books.video(owner).unreadable
+                               or registry.books.conversation(owner).unreadable)
 
     def stores_for(request: Request) -> list[tuple[str, ThemeStore]]:
         """The theme stores the asking page's mode shows, with whose each is."""
@@ -942,7 +1141,8 @@ def create_app(registry: RecordingRegistry) -> FastAPI:
         drawn until it arrives.
         """
         refs = set()
-        for kind, book in (("text", registry.books.common_text), ("video", registry.books.common_video)):
+        for kind, book in (("text", registry.books.common_text), ("video", registry.books.common_video),
+                           ("conversation", registry.books.common_conversation)):
             refs |= {f"{kind}:{rid}" for rid, r in book._merged.items() if r.get("deleted")}
         return refs
 

@@ -1,6 +1,9 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
+from subtitle_search.conversation import CONVERSATION_FILENAME
 from subtitle_search.app import FOLDER_ENV, create_app, from_environment
 from subtitle_search.session import RecordingError, RecordingRegistry, open_recording
 
@@ -11,8 +14,26 @@ from . import fixtures
 MEDIA_BYTES = bytes(range(256)) * 40  # 10240 bytes
 
 
+def write_conversation(folder):
+    """Write a one-exchange conversation.jsonl into a recording folder."""
+    records = [
+        {"record_type": "message", "conversation_id": "c1", "turn": 0, "version": 0, "role": role, "text": text}
+        for role, text in (("user", "hello there"), ("assistant", "hi back"))
+    ]
+    (folder / CONVERSATION_FILENAME).write_text("".join(json.dumps(r) + "\n" for r in records))
+
+
+USER_MSG, AI_MSG = "c1:0:0:user", "c1:0:0:assistant"
+
+
+def conversation_payload(**extra):
+    return {"text": "hello", "start_message_id": USER_MSG, "end_message_id": USER_MSG,
+            "start_char_offset": 0, "end_char_offset": 5, **extra}
+
+
 @pytest.fixture
 def folder(tmp_path):
+    write_conversation(tmp_path)
     (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX, encoding="utf-8")
     (tmp_path / "meeting.mp4").write_bytes(MEDIA_BYTES)
     (tmp_path / "audio_only.m4a").write_bytes(b"x" * 100)
@@ -892,3 +913,166 @@ def test_similar_quotes_follow_the_mode(client):
 
     assert alone == []
     assert len(together) == 1
+
+
+def test_conversation_highlight_crud(client):
+    api, rec_id = client
+    base = f"/api/recordings/{rec_id}/conversation-highlights"
+    assert api.get(base).json() == {"highlights": []}
+
+    created = api.post(base, json=conversation_payload(note="n"))
+    assert created.status_code == 201
+    highlight = created.json()["highlight"]
+    assert highlight["note"] == "n"
+    assert [h["id"] for h in api.get(base).json()["highlights"]] == [highlight["id"]]
+
+    patched = api.patch(f"{base}/{highlight['id']}", json={"note": "changed"})
+    assert patched.json()["highlight"]["note"] == "changed"
+    assert api.patch(f"{base}/nope", json={"note": "x"}).status_code == 404
+
+    assert api.delete(f"{base}/{highlight['id']}").json() == {"deleted": highlight["id"]}
+    assert api.delete(f"{base}/{highlight['id']}").status_code == 404
+    assert api.get(base).json() == {"highlights": []}
+
+
+def test_conversation_highlight_bad_message_400(client):
+    api, rec_id = client
+    bad = conversation_payload(start_message_id="c1:9:0:user")
+    response = api.post(f"/api/recordings/{rec_id}/conversation-highlights", json=bad)
+    assert response.status_code == 400
+
+
+def test_conversation_highlight_others_readonly(client):
+    api, rec_id = client
+    base = f"/api/recordings/{rec_id}/conversation-highlights"
+    hid = api.post(base, json=conversation_payload()).json()["highlight"]["id"]
+
+    other, _ = as_coder(api, "Other Coder", "OC")
+    assert other.patch(f"{base}/{hid}", json={"note": "x"}).status_code == 403
+    assert other.delete(f"{base}/{hid}").status_code == 403
+    assert len(other.get(base).json()["highlights"]) == 1
+
+
+def test_recording_payload_has_conversation(client):
+    api, rec_id = client
+    payload = api.get(f"/api/recordings/{rec_id}").json()
+    assert USER_MSG in payload["conversation"]["messages"]
+    assert payload["conversation_highlights"] == []
+
+
+# -- the conversation codebook ------------------------------------------------------
+
+
+def test_conversation_codebook_crud(client):
+    """Conversation codes are created, counted, renamed and listed with their highlights, as text codes are."""
+    http, rid = client
+    created = http.post("/api/library/conversation-codebook", json={"name": "trust"})
+    assert created.status_code == 201
+    code = created.json()["code"]
+    assert http.get("/api/library/text-codebook").json()["codes"] == []
+    highlight = http.post(f"/api/recordings/{rid}/conversation-highlights",
+                          json=conversation_payload(codes=[code["id"]], note="n")).json()["highlight"]
+
+    state = http.get("/api/library/conversation-codebook").json()
+    assert [(c["name"], c["coder"], c["highlight_count"]) for c in state["codes"]] == [("trust", http.headers["X-Coder"], 1)]
+    assert state["colors"]
+
+    renamed = http.patch(f"/api/library/conversation-codebook/{code['id']}", json={"name": "reliance", "description": "x"})
+    assert renamed.json()["code"]["name"] == "reliance"
+    assert http.post("/api/library/conversation-codebook", json={"name": "Reliance"}).status_code == 400
+
+    [row] = http.get(f"/api/library/conversation-codebook/{code['id']}/applications").json()["applications"]
+    assert {k: row[k] for k in ("ref", "recording_id", "highlight_id", "text", "note", "coder", "start_message_id",
+                                "start_turn", "end_turn", "speaker")} == {
+        "ref": f"{rid}:{highlight['id']}", "recording_id": rid, "highlight_id": highlight["id"], "text": "hello", "note": "n",
+        "coder": http.headers["X-Coder"], "start_message_id": USER_MSG, "start_turn": 0, "end_turn": 0, "speaker": "User"}
+    assert row["recording_title"]
+    assert "start_time" not in row
+
+    bare = http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(note="later")).json()["highlight"]
+    [uncoded] = http.get("/api/library/conversation-codebook/uncoded").json()["highlights"]
+    assert (uncoded["ref"], uncoded["highlight_id"], uncoded["speaker"], uncoded["start_turn"]) == (f"{rid}:{bare['id']}", bare["id"], "User", 0)
+
+
+def test_conversation_applications_tolerate_a_malformed_message_id(client, folder):
+    """A stored highlight whose message id cannot be parsed is listed with no turn or speaker."""
+    http, rid = client
+    code = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(codes=[code["id"]]))
+    path = folder / "coders" / http.headers["X-Coder"] / "conversation_highlights.json"
+    data = json.loads(path.read_text())
+    data["highlights"][0]["start_message_id"] = "broken"
+    path.write_text(json.dumps(data))
+    http.post("/api/sync")
+
+    response = http.get(f"/api/library/conversation-codebook/{code['id']}/applications")
+    assert response.status_code == 200
+    [row] = response.json()["applications"]
+    assert (row["start_turn"], row["end_turn"], row["speaker"]) == (None, None, None)
+    # A message not in the chat sorts after every message that is (the chat has two).
+    assert row["position"] == [2, 0]
+
+
+def test_conversation_application_rows_carry_display_position(client):
+    """Each Codebook row carries its place in the chat, so the page lists a recording's highlights top to bottom."""
+    http, rid = client
+    code = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights",
+              json=conversation_payload(text="hi", start_message_id=AI_MSG, end_message_id=AI_MSG,
+                                        end_char_offset=2, codes=[code["id"]]))
+    http.post(f"/api/recordings/{rid}/conversation-highlights",
+              json=conversation_payload(text="there", start_char_offset=6, end_char_offset=11, codes=[code["id"]]))
+    rows = http.get(f"/api/library/conversation-codebook/{code['id']}/applications").json()["applications"]
+    assert sorted(row["position"] for row in rows) == [[0, 6], [1, 0]]
+
+
+def test_conversation_code_delete_in_use_refused(client):
+    """A conversation code on a highlight cannot be deleted until it is taken off; the highlight stays."""
+    http, rid = client
+    code = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(codes=[code["id"]]))
+
+    refused = http.delete(f"/api/library/conversation-codebook/{code['id']}")
+    assert refused.status_code == 400
+    assert refused.json()["detail"].startswith("1 highlight still use")
+
+    [row] = http.get(f"/api/library/conversation-codebook/{code['id']}/applications").json()["applications"]
+    removed = http.post(f"/api/library/conversation-codebook/{code['id']}/applications/remove", json={"refs": [row["ref"]]})
+    assert removed.json()["removed"] == 1
+    assert [h["codes"] for h in http.get(f"/api/recordings/{rid}/conversation-highlights").json()["highlights"]] == [[]]
+    deleted = http.delete(f"/api/library/conversation-codebook/{code['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json()["codes"] == []
+
+
+def test_conversation_code_merge(client):
+    """Merging one conversation code into another moves its highlights and removes it."""
+    http, rid = client
+    a = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    b = http.post("/api/library/conversation-codebook", json={"name": "reliance"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(codes=[a["id"], b["id"]]))
+
+    assert http.post(f"/api/library/conversation-codebook/{a['id']}/merge", json={"into": a["id"]}).status_code == 400
+    merged = http.post(f"/api/library/conversation-codebook/{a['id']}/merge", json={"into": b["id"]}).json()
+    assert merged["moved"] == 1
+    assert [h["codes"] for h in http.get(f"/api/recordings/{rid}/conversation-highlights").json()["highlights"]] == [[b["id"]]]
+    assert [c["name"] for c in merged["codes"]] == ["reliance"]
+
+
+def test_conversation_code_move_return_and_history(client):
+    """The move, return and history routes work for conversation codes."""
+    http, rid = client
+    code = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(codes=[code["id"]]))
+    base = "/api/library/conversation-codebook"
+
+    assert http.post(f"{base}/{code['id']}/move?dry_run=true", json={"final": True}).json()["moved"] == 1
+    moved = http.post(f"{base}/{code['id']}/move", json={"final": True}).json()
+    [common] = [c for c in moved["codes"] if c["coder"] == "common"]
+    assert common["highlight_count"] == 1
+
+    returned = http.post(f"{base}/{common['id']}/return").json()
+    assert returned["returned"] == 1
+    assert [c["coder"] for c in returned["codes"]] == [http.headers["X-Coder"]]
+    entries = http.get(f"{base}/{common['id']}/history").json()["entries"]
+    assert [(e["action"], e["kind"]) for e in entries] == [("returned", "conversation"), ("moved", "conversation")]

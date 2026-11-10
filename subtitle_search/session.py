@@ -7,7 +7,8 @@ into parts, orders them, and lays them end to end on a single timeline so times
 run continuously across the whole session.
 
 The registry holds the study's recordings, addressed by a stable id, plus its
-coders, each coder's codebooks and themes, and the common codebooks and themes.
+coders, each coder's codebooks and themes, the common codebooks and themes, and
+the imported video codes.
 ``refresh()`` re-reads all of them from disk.
 """
 
@@ -21,11 +22,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .editing import BACKUP_SUFFIX, backup_path, read_source
-from .codebook import TextCodebook
+from .codebook import ConversationCodebook, TextCodebook
 from .coders import CODERS_DIRNAME, CoderDirectory
 from .common import COMMON, IMPORTED, CommonCodebook, CommonQuotes, CommonSet, CommonSpans
+from .conversation import Conversation, load_conversation
+from .conversation_highlights import HIGHLIGHTS_FILENAME as CONVERSATION_HIGHLIGHTS_FILENAME
+from .conversation_highlights import ConversationHighlightStore, SessionConversationHighlights
 from .highlights import QUOTES_FILENAME, HighlightStore, SessionQuotes
-from .imported import CODEBOOK_NAME as IMPORTED_CODEBOOK_FILENAME
 from .imported import ImportedCodebook, ImportedSpans
 from .library import CommonThemeStore, ThemeStore
 from .mediainfo import container_duration
@@ -171,6 +174,7 @@ def discover_parts(folder: Path) -> list[PartFiles]:
 LEGACY_QUOTES_FILENAME = "session.highlights.json"
 
 TEXT_CODEBOOK_FILENAME = "text_codebook.json"
+CONVERSATION_CODEBOOK_FILENAME = "conversation_codebook.json"
 
 #: One coder's themes, beside their codebooks; and the shared file from before coders.
 THEMES_FILENAME = "themes.json"
@@ -182,10 +186,15 @@ RETURNS_FILENAME = "returns.json"
 #: Who put which common code on a common quote, and who contributed to a common span.
 COMMON_QUOTE_CODES_FILENAME = "quote_codes.json"
 COMMON_SPAN_PARTS_FILENAME = "video_code_parts.json"
+COMMON_CONVERSATION_CODES_FILENAME = "conversation_highlight_codes.json"
+
+#: Where a conversation highlight starts and ends, and the fields a common highlight keeps.
+CONVERSATION_ANCHORS = ("start_message_id", "start_char_offset", "end_message_id", "end_char_offset")
+CONVERSATION_FIELDS = (*CONVERSATION_ANCHORS, "text", "color")
 
 
 class CoderBooks:
-    """Every coder's two codebooks, from ``<study root>/coders/<id>/``.
+    """Every coder's three codebooks (text, video, conversation), from ``<study root>/coders/<id>/``.
 
     Opened on first use and kept, so a quote store and the routes share one
     in-memory codebook per coder. ``reload`` drops them all, so the next use reads
@@ -196,11 +205,13 @@ class CoderBooks:
         self.root = Path(root)
         self._text: dict[str, TextCodebook] = {}
         self._video: dict[str, VideoCodebook] = {}
+        self._conversation: dict[str, ConversationCodebook] = {}
         #: The agreed codes, answered for the coder label "common".
         self.common_text = CommonCodebook(self.root, TEXT_CODEBOOK_FILENAME)
+        self.common_conversation = CommonCodebook(self.root, CONVERSATION_CODEBOOK_FILENAME)
         self.common_video = CommonCodebook(self.root, VIDEO_CODEBOOK_FILENAME)
         #: Video codes imported from study diaries, answered for the coder label "imported".
-        self.imported_video = ImportedCodebook(self.root, IMPORTED_CODEBOOK_FILENAME)
+        self.imported_video = ImportedCodebook(self.root)
 
     def _folder(self, coder: str) -> Path:
         return self.root / CODERS_DIRNAME / coder
@@ -211,6 +222,13 @@ class CoderBooks:
         if coder not in self._text:
             self._text[coder] = TextCodebook(self._folder(coder) / TEXT_CODEBOOK_FILENAME)
         return self._text[coder]
+
+    def conversation(self, coder: str) -> ConversationCodebook:
+        if coder == COMMON:
+            return self.common_conversation
+        if coder not in self._conversation:
+            self._conversation[coder] = ConversationCodebook(self._folder(coder) / CONVERSATION_CODEBOOK_FILENAME)
+        return self._conversation[coder]
 
     def video(self, coder: str) -> VideoCodebook:
         if coder == COMMON:
@@ -231,6 +249,12 @@ class CoderBooks:
             (c, code) for c in self.coders() for code in self.text(c).list()
         ]
 
+    def all_conversation(self) -> list[tuple[str, dict]]:
+        """Every conversation code: the common ones first, then each coder's."""
+        return [(COMMON, code) for code in self.common_conversation.list()] + [
+            (c, code) for c in self.coders() for code in self.conversation(c).list()
+        ]
+
     def all_video(self) -> list[tuple[str, dict]]:
         """Every video code: the common ones, the imported ones, then each coder's."""
         return [(COMMON, code) for code in self.common_video.list()] + [
@@ -240,7 +264,9 @@ class CoderBooks:
     def reload(self) -> None:
         self._text.clear()
         self._video.clear()
+        self._conversation.clear()
         self.common_text.reload()
+        self.common_conversation.reload()
         self.common_video.reload()
         self.imported_video.reload()
 
@@ -356,6 +382,10 @@ class Recording:
     books: CoderBooks
     #: Shared files from before coders, left alone and only reported.
     legacy_files: list[str]
+    #: The recording's chat, or None when its folder has no conversation.jsonl.
+    conversation: Conversation | None = None
+    #: Every coder's conversation highlights.
+    conversation_highlights: SessionConversationHighlights = None
 
     def _coder_folder(self, coder: str) -> Path:
         return self.folder / CODERS_DIRNAME / coder
@@ -367,10 +397,18 @@ class Recording:
         quote_stores = {c: self._quotes_for(c) for c in found if (self._coder_folder(c) / QUOTES_FILENAME).is_file()}
         span_stores = {c: self._spans_for(c) for c in found if (self._coder_folder(c) / VIDEO_CODES_FILENAME).is_file()}
         self.common_quotes = CommonQuotes(self.folder, QUOTES_FILENAME, COMMON_QUOTE_CODES_FILENAME)
+        self.common_conversation = CommonQuotes(
+            self.folder, CONVERSATION_HIGHLIGHTS_FILENAME, COMMON_CONVERSATION_CODES_FILENAME,
+            anchors=CONVERSATION_ANCHORS, fields=CONVERSATION_FIELDS)
+        highlight_stores = {
+            c: self._conversation_for(c) for c in found if (self._coder_folder(c) / CONVERSATION_HIGHLIGHTS_FILENAME).is_file()
+        }
         self.common_spans = CommonSpans(self.folder, VIDEO_CODES_FILENAME, COMMON_SPAN_PARTS_FILENAME)
         self.returns = CommonSet(self.folder, RETURNS_FILENAME)
         self.store = SessionQuotes(quote_stores, factory=self._quotes_for, common=self.common_quotes, returns=self.returns)
         self.store.transcript = self.transcript
+        self.conversation_highlights = SessionConversationHighlights(
+            highlight_stores, factory=self._conversation_for, common=self.common_conversation, returns=self.returns)
         #: Spans imported from the session's diary, listed among the coders' under "imported".
         self.imported = ImportedSpans(self.folder, lambda: self.transcript.duration)
         span_stores[IMPORTED] = self.imported
@@ -378,6 +416,10 @@ class Recording:
 
     def _quotes_for(self, coder: str) -> HighlightStore:
         return HighlightStore(self._coder_folder(coder) / QUOTES_FILENAME, self.transcript, self.books.text(coder))
+
+    def _conversation_for(self, coder: str) -> ConversationHighlightStore:
+        return ConversationHighlightStore(
+            self._coder_folder(coder) / CONVERSATION_HIGHLIGHTS_FILENAME, self.conversation, self.books.conversation(coder))
 
     def _spans_for(self, coder: str) -> VideoCodeStore:
         return VideoCodeStore(self._coder_folder(coder) / VIDEO_CODES_FILENAME)
@@ -389,6 +431,7 @@ class Recording:
         mid-sync and cannot be parsed still leaves the quotes and spans current,
         on the transcript already in hand. Its error is then raised to the caller.
         """
+        self.conversation = load_conversation(self.folder)
         self.load_coders()
         transcript, sources = build_transcript(self.folder, self.part_files)
         self.transcript = transcript
@@ -482,6 +525,8 @@ class Recording:
             "part_count": len(self.transcript.parts),
             "speakers": self.transcript.speakers,
             "quote_count": len(self.store.list()),
+            "has_conversation": self.conversation is not None,
+            "conversation_count": len(self.conversation_highlights.list()),
             # Carried so a page outside the reader can still turn a quote's
             # session time into a position in the right media file.
             "parts": [p.to_dict() for p in self.transcript.parts],
@@ -494,6 +539,11 @@ class Recording:
             "transcript": self.transcript.to_dict(),
             "highlights": self.store.list(),
             "highlights_stale": self.store.stale,
+            "conversation": (
+                {"html": self.conversation.html, "order": self.conversation.order, "messages": self.conversation.messages}
+                if self.conversation else None
+            ),
+            "conversation_highlights": self.conversation_highlights.list(),
             "video_codes": self.video_codes.list(),
             "imported": self.imported.status(),
             "legacy_files": self.legacy_files,
@@ -522,6 +572,7 @@ def open_recording(folder: Path, books: CoderBooks | None = None) -> Recording:
         video_codes=SessionVideoCodes({}),
         books=books or CoderBooks(folder),
         legacy_files=[n for n in (LEGACY_QUOTES_FILENAME, LEGACY_SPANS_FILENAME) if (folder / n).exists()],
+        conversation=load_conversation(folder),
     )
     recording.load_coders()
     return recording
@@ -620,13 +671,13 @@ class RecordingRegistry:
     def _common_sets(self):
         yield self.books.common_text
         yield self.books.common_video
-        yield self.books.imported_video
+        yield self.books.common_conversation
         yield from self.common_themes.sets()
         for recording in self._recordings.values():
             yield from recording.common_quotes.sets()
+            yield from recording.common_conversation.sets()
             yield from recording.common_spans.sets()
             yield recording.returns
-            yield from recording.imported.sets()
 
     def push_common(self) -> None:
         """Write the combined common records into the shared files."""

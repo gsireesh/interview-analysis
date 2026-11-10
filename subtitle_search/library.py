@@ -3,7 +3,7 @@
 Flattens every recording's quotes (all coders' and common) into one corpus for
 the library and themes pages, filtered by mode, and stores the themes.
 
-A theme holds codes, as refs ``text:<id>`` or ``video:<id>``, never copies.
+A theme holds codes, as refs ``text:<id>``, ``video:<id>`` or ``conversation:<id>``, never copies.
 
 - ``ThemeStore``: one coder's themes, ``<study>/coders/<id>/themes.json``.
   Another coder's store is opened read-only.
@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .common import COMMON, IMPORTED
+from .conversation_highlights import highlight_where
 
 SCHEMA_VERSION = 2
 
@@ -270,14 +271,37 @@ def code_items(registry, mode: str | None = None, coder: str | None = None) -> l
                 "recording_title": recording.title, "start_time": span["start"], "end_time": span["end"],
                 "text": span.get("note") or "", "speaker": None, "coder": span.get("coder"),
             })
+        order = recording.conversation.order if recording.conversation else []
+        for highlight in recording.conversation_highlights.list():
+            try:
+                where = highlight_where(highlight)
+            except (ValueError, IndexError):
+                # A message id that cannot be parsed still lists its highlight, with no turn or speaker.
+                where = {"start_turn": None, "end_turn": None, "speaker": None}
+            start = highlight["start_message_id"]
+            for code_id in highlight.get("codes") or []:
+                uses.setdefault(f"conversation:{code_id}", []).append({
+                    "ref": quote_ref(recording.id, highlight["id"]), "recording_id": recording.id,
+                    "recording_title": recording.title, "highlight_id": highlight["id"], "message_id": start,
+                    "start_time": None, "end_time": None, "text": highlight.get("text", ""),
+                    "note": highlight.get("note", ""), "coder": highlight.get("coder"), **where,
+                    # Sort position within the recording: display order, with messages not in the chat after those that are.
+                    "_order": (order.index(start) if start in order else len(order), highlight.get("start_char_offset", 0)),
+                })
     items = []
-    for kind, pairs in (("text", registry.books.all_text()), ("video", registry.books.all_video())):
+    for kind, pairs in (("text", registry.books.all_text()), ("video", registry.books.all_video()),
+                        ("conversation", registry.books.all_conversation())):
         for owner, code in pairs:
             if mode == "independent" and owner not in (coder, COMMON, IMPORTED):
                 continue
             ref = f"{kind}:{code['id']}"
             # By speaker, then time; uncredited quotes and video spans last.
-            applications = sorted(uses.get(ref, []), key=lambda a: (a["speaker"] is None, (a["speaker"] or "").lower(), a["start_time"], a["recording_title"]))
+            found = uses.get(ref, [])
+            if kind == "conversation":
+                # By recording, then where the highlight sits in its chat.
+                applications = [{k: v for k, v in a.items() if k != "_order"} for a in sorted(found, key=lambda a: (a["recording_title"], a["_order"]))]
+            else:
+                applications = sorted(found, key=lambda a: (a["speaker"] is None, (a["speaker"] or "").lower(), a["start_time"], a["recording_title"]))
             items.append({
                 "ref": ref, "kind": kind, "id": code["id"], "name": code["name"],
                 "text": code_label(code["name"], owner, mode, initials), "color": code.get("color"),
@@ -288,8 +312,9 @@ def code_items(registry, mode: str | None = None, coder: str | None = None) -> l
 
 
 def code_packing_order(items: list[dict]) -> dict[str, tuple]:
-    """How tidying orders code cards: alphabetically by name, text codes before video."""
-    return {i["ref"]: (0, i["name"].lower(), 0 if i["kind"] == "text" else 1, "") for i in items}
+    """How tidying orders code cards: alphabetically by name, then text codes, video codes, conversation codes."""
+    rank = {"text": 0, "video": 1, "conversation": 2}
+    return {i["ref"]: (0, i["name"].lower(), rank[i["kind"]], "") for i in items}
 
 
 def video_index(registry, mode: str | None = None, coder: str | None = None) -> list[dict]:
@@ -319,6 +344,37 @@ def video_index(registry, mode: str | None = None, coder: str | None = None) -> 
     for entry in entries.values():
         entry["recording_count"] = len(entry["recordings"])
     return sorted(entries.values(), key=lambda e: (-e["recording_count"], -e["span_count"], e["name"].lower()))
+
+
+def conversation_index(registry, mode: str | None = None, coder: str | None = None) -> list[dict]:
+    """Conversation codes with their highlight counts per recording, as the mode shows them."""
+    initials = {**({c["id"]: c["initials"] for c in registry.coders.list()} if registry.coders else {}), COMMON: "✓", IMPORTED: "imported"}
+    entries: dict[str, dict] = {}
+    for recording in registry.list():
+        for highlight in recording.conversation_highlights.list():
+            owner = highlight.get("coder")
+            if mode == "independent" and owner not in (coder, COMMON, IMPORTED):
+                continue
+            for code_id in highlight.get("codes") or []:
+                code = registry.books.conversation(owner).get(code_id)
+                if code is None:
+                    continue
+                entry = entries.setdefault(
+                    code["id"],
+                    {
+                        "id": code["id"],
+                        "name": code_label(code["name"], owner, mode, initials),
+                        "color": code["color"],
+                        "coder": owner,
+                        "highlight_count": 0,
+                        "recordings": {},
+                    },
+                )
+                entry["highlight_count"] += 1
+                entry["recordings"][recording.id] = entry["recordings"].get(recording.id, 0) + 1
+    for entry in entries.values():
+        entry["recording_count"] = len(entry["recordings"])
+    return sorted(entries.values(), key=lambda e: (-e["recording_count"], -e["highlight_count"], e["name"].lower()))
 
 
 def tag_index(quotes: list[dict]) -> list[dict]:

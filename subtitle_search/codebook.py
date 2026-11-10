@@ -1,7 +1,8 @@
-"""A coder's list of codes, for text or for video.
+"""A coder's list of codes, for text, video or conversation.
 
-Text codes (what was said, applied to quotes) and video codes (what was done,
-applied to spans of the recording) are separate codebooks that are never merged.
+Text codes (what was said, applied to quotes), video codes (what was done,
+applied to spans of the recording) and conversation codes (applied to highlights
+of the participant's chat) are separate codebooks that are never merged.
 They behave the same way, though, so they share this class: a code has an id, a
 unique name, a colour and a description, and quotes or spans refer to it by id so
 a rename is one edit that every use follows. Video codes can also carry a
@@ -124,3 +125,9 @@ class Codebook(JsonStore):
 
 class TextCodebook(Codebook):
     """Codes applied to quotes. Several can sit on one quote."""
+
+
+class ConversationCodebook(Codebook):
+    """Codes applied to conversation highlights. Several can sit on one highlight, and none has a shortcut key."""
+
+    reserved_keys = None

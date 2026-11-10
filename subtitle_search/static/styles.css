@@ -3065,7 +3065,11 @@ mark.hl--noted::after {
  * right with every quote or span that carries it.
  */
 
-.cbook { display: grid; grid-template-columns: minmax(15rem, 22rem) minmax(0, 1fr); gap: 1.5rem; padding: 1rem 1.5rem 3rem; max-width: 80rem; margin: 0 auto; width: 100%; }
+.page--split { display: flex; overflow: hidden; }
+.cbook { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(15rem, 22rem) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 1.5rem; padding: 1rem 1.5rem 0; max-width: 80rem; margin: 0 auto; width: 100%; }
+.cbook__pane { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; min-height: 0; }
+.cbook__find { flex: 0 0 auto; width: 100%; }
+.cbook__scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding-bottom: 3rem; }
 .cbook__list { display: grid; align-content: start; gap: 0.125rem; }
 .cbook__group { font-size: 0.625rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; padding: 0.75rem 0.5rem 0.25rem; }
 .cbook__row { position: relative; display: flex; align-items: stretch; border-radius: 3px; }
@@ -3096,9 +3100,18 @@ mark.hl--noted::after {
 .cbook__speaker { display: block; font-size: 0.6875rem; color: var(--ink-faint); margin-top: 0.125rem; }
 .cbook__len { font-family: var(--mono); }
 .cbook__jump { color: var(--marker); text-decoration: none; white-space: nowrap; font-size: 0.75rem; }
+.cbook__filter { position: relative; }
+.cbook__filter-btn { font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
+.cbook__filter-btn--on { color: var(--marker); }
+.cbook__filter-menu { position: absolute; top: calc(100% + 2px); left: 0; z-index: 20; min-width: 12rem; max-height: 16rem; overflow: auto; display: grid; gap: 0.25rem; padding: 0.4rem 0.5rem; background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); font-size: 0.8125rem; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); }
+.cbook__filter-menu label { display: flex; align-items: center; gap: 0.4rem; white-space: nowrap; }
+.cbook__filter-acts { display: flex; gap: 0.75rem; padding-bottom: 0.25rem; border-bottom: 1px solid var(--rule-soft); }
+.cbook__filter-acts button { font: inherit; font-size: 0.75rem; background: none; border: 0; padding: 0; color: var(--marker); cursor: pointer; }
 
 @media (max-width: 50rem) {
-  .cbook { grid-template-columns: 1fr; padding: 1rem; }
+  .cbook { grid-template-columns: 1fr; grid-template-rows: none; padding: 1rem; }
+  .page--split { display: block; overflow: auto; }
+  .cbook__scroll { overflow: visible; }
 }
 .who--common { color: var(--marker); font-family: var(--sans); font-weight: 700; }
 .who--imported { color: var(--ink-soft); font-family: var(--sans); font-weight: 700; }
@@ -3145,6 +3158,8 @@ mark.hl--noted::after {
 .pane__tabs button[aria-selected="true"] { background: var(--marker-wash); color: var(--marker); }
 .pane__zoom { display: inline-flex; align-items: center; gap: 0.35rem; letter-spacing: 0; text-transform: none; font-weight: 400; font-family: var(--mono); font-size: 0.625rem; }
 .pane__zoom button { font: inherit; border: 1px solid var(--rule); background: var(--paper); color: var(--ink-soft); border-radius: 2px; width: 1.25rem; height: 1.25rem; line-height: 1; cursor: pointer; }
+.pane__zoom .vc-imported-toggle { width: auto; padding: 0 0.3rem; }
+.pane__zoom .vc-imported-toggle[aria-pressed="false"] { color: var(--ink-faint); text-decoration: line-through; }
 
 .pane-div { flex: 0 0 5px; background: var(--rule); cursor: col-resize; position: relative; touch-action: none; }
 .pane-div::after { content: ""; position: absolute; inset: 0 -4px; }
@@ -3172,6 +3187,66 @@ mark.hl--noted::after {
 @media (prefers-reduced-motion: reduce) {
   .quotes-level--on .quote { transition: none; }
 }
+
+/* ---------------------------------------------------------- conversation -- */
+/*
+ * The participant's chat beside its highlight cards, in one scroll body. The
+ * tf-* rules are ported from study-interface assets/chat.css (turn feedback),
+ * scoped to the pane, with that file's Gradio variables mapped to this page's.
+ */
+[data-pane="conversation"] .conv { display: grid; grid-template-columns: minmax(0, 1fr) 14rem; align-items: start; }
+[data-pane="conversation"] .conv__messages { display: flex; flex-direction: column; gap: 0.75rem; padding: 0.75rem; font-size: 0.8125rem; line-height: 1.5; overflow-wrap: anywhere; }
+[data-pane="conversation"] .conv__cards { align-self: stretch; border-left: 1px solid var(--rule-soft); padding: 0.5rem 0; }
+[data-pane="conversation"] .quote__meta { flex-wrap: wrap; }
+[data-pane="conversation"] .quote__where { font-family: var(--mono); white-space: nowrap; }
+[data-pane="conversation"] .quote__flag { border: 1px solid var(--rule); border-radius: 999px; padding: 0 0.35rem; white-space: nowrap; }
+/* A highlight whose words are not in the chat any more: not painted, its card first and marked. */
+[data-pane="conversation"] .quote--missing { border-left-style: dashed; }
+[data-pane="conversation"] .quote__flag--missing { border-color: var(--dot-rose); color: var(--dot-rose); }
+
+[data-pane="conversation"] .tf-row { display: flex; align-items: flex-start; gap: 0.5rem; }
+[data-pane="conversation"] .tf-row--you { justify-content: flex-end; }
+[data-pane="conversation"] .tf-avatar { flex: none; width: 21px; height: 21px; margin-top: 0.1rem; border-radius: 50%; background-size: cover; }
+[data-pane="conversation"] .tf-avatar--you { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='24' cy='24' r='24' fill='%232f5d7c'/%3E%3Ccircle cx='24' cy='19' r='7' fill='%23ffffff' opacity='.92'/%3E%3Cpath d='M9 44a15 15 0 0 1 30 0z' fill='%23ffffff' opacity='.92'/%3E%3C/svg%3E"); }
+[data-pane="conversation"] .tf-avatar--ai { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='24' cy='24' r='24' fill='%233d4653'/%3E%3Ccircle cx='24' cy='8' r='2.6' fill='%23e8ecf2'/%3E%3Crect x='23' y='10' width='2' height='4' fill='%23e8ecf2'/%3E%3Crect x='11' y='14' width='26' height='21' rx='6' fill='%23e8ecf2'/%3E%3Ccircle cx='19' cy='23' r='3' fill='%233d4653'/%3E%3Ccircle cx='29' cy='23' r='3' fill='%233d4653'/%3E%3Crect x='18' y='29' width='12' height='2.4' rx='1.2' fill='%233d4653'/%3E%3C/svg%3E"); }
+[data-pane="conversation"] .tf-bubble { max-width: 80%; padding: 0.42rem 0.75rem; border-radius: 1.05rem; background: var(--rule-soft); }
+/* The quote line and the typed text of one message, so the avatar stays a single flex sibling. */
+[data-pane="conversation"] .tf-bubble-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
+[data-pane="conversation"] .tf-quote-line { color: var(--ink-faint); font-size: 0.85em; }
+[data-pane="conversation"] .tf-reply { max-width: calc(100% - 1.7rem); }
+[data-pane="conversation"] .tf-body > :first-child { margin-top: 0; }
+[data-pane="conversation"] .tf-body > :last-child { margin-bottom: 0; }
+[data-pane="conversation"] .tf-reply p { margin: 0 0 0.55rem; }
+[data-pane="conversation"] .tf-reply ol,
+[data-pane="conversation"] .tf-reply ul { margin: 0.35rem 0 0.55rem; padding-left: 1.2rem; }
+[data-pane="conversation"] .tf-reply li { margin-bottom: 0.22rem; }
+[data-pane="conversation"] .tf-reply h1,
+[data-pane="conversation"] .tf-reply h2,
+[data-pane="conversation"] .tf-reply h3,
+[data-pane="conversation"] .tf-reply h4,
+[data-pane="conversation"] .tf-reply h5,
+[data-pane="conversation"] .tf-reply h6 { margin: 0.6rem 0 0.22rem; font-size: 1em; font-weight: 700; }
+[data-pane="conversation"] .tf-reply pre { overflow-x: auto; }
+[data-pane="conversation"] .tf-reply code { font-family: var(--mono); font-size: 0.9em; }
+[data-pane="conversation"] .tf-reply blockquote { margin: 0 0 0.55rem; padding-left: 0.6rem; border-left: 2px solid var(--rule); color: var(--ink-soft); }
+/* Closes a reply that stopped part way, set apart so it does not read as the reply's last sentence. */
+[data-pane="conversation"] .tf-reply .tf-cut { margin: 0.65rem 0 0; padding-top: 0.45rem; border-top: 1px solid var(--rule); font-size: 0.72rem; font-style: italic; color: var(--ink-faint); }
+
+/* Clearing the conversation breaks the session in two, an edit breaks one conversation, and a regeneration belongs to one exchange. */
+[data-pane="conversation"] .tf-mark { display: flex; align-items: center; gap: 0.5rem; margin: 0; font-size: 0.73rem; font-weight: 600; color: var(--ink-faint); }
+[data-pane="conversation"] .tf-mark::before,
+[data-pane="conversation"] .tf-mark::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+[data-pane="conversation"] .tf-mark--clear { margin: 0.35rem 0; font-weight: 700; color: var(--ink); }
+[data-pane="conversation"] .tf-mark--clear::before,
+[data-pane="conversation"] .tf-mark--clear::after { height: 2px; }
+[data-pane="conversation"] .tf-mark--retry { margin-left: 1.7rem; }
+[data-pane="conversation"] .tf-mark--retry::before { flex: none; width: 1.1rem; background: var(--marker); }
+
+/* Labels and a side rule only when the file holds more than one conversation; abandoned exchanges behind a dashed rule. */
+[data-pane="conversation"] .tf-conv { display: flex; flex-direction: column; gap: 0.75rem; }
+[data-pane="conversation"] .tf-conv--named { border-left: 2px solid var(--rule); padding-left: 0.5rem; }
+[data-pane="conversation"] .tf-conv-label { margin: 0; font-size: 0.67rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-faint); }
+[data-pane="conversation"] .tf-gone { display: flex; flex-direction: column; gap: 0.75rem; border-left: 2px dashed var(--rule); padding-left: 0.5rem; }
 
 /* Transcript search matches, dropped down under the box. */
 .topbar__search { position: relative; }
