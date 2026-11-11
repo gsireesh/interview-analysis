@@ -1,6 +1,9 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
+from subtitle_search.conversation import CONVERSATION_FILENAME
 from subtitle_search.app import FOLDER_ENV, create_app, from_environment
 from subtitle_search.session import RecordingError, RecordingRegistry, open_recording
 
@@ -11,8 +14,26 @@ from . import fixtures
 MEDIA_BYTES = bytes(range(256)) * 40  # 10240 bytes
 
 
+def write_conversation(folder):
+    """Write a one-exchange conversation.jsonl into a recording folder."""
+    records = [
+        {"record_type": "message", "conversation_id": "c1", "turn": 0, "version": 0, "role": role, "text": text}
+        for role, text in (("user", "hello there"), ("assistant", "hi back"))
+    ]
+    (folder / CONVERSATION_FILENAME).write_text("".join(json.dumps(r) + "\n" for r in records))
+
+
+USER_MSG, AI_MSG = "c1:0:0:user", "c1:0:0:assistant"
+
+
+def conversation_payload(**extra):
+    return {"text": "hello", "start_message_id": USER_MSG, "end_message_id": USER_MSG,
+            "start_char_offset": 0, "end_char_offset": 5, **extra}
+
+
 @pytest.fixture
 def folder(tmp_path):
+    write_conversation(tmp_path)
     (tmp_path / "meeting.vtt").write_text(fixtures.COLON_PREFIX, encoding="utf-8")
     (tmp_path / "meeting.mp4").write_bytes(MEDIA_BYTES)
     (tmp_path / "audio_only.m4a").write_bytes(b"x" * 100)
@@ -23,7 +44,15 @@ def folder(tmp_path):
 def client(folder):
     registry = RecordingRegistry()
     registry.add_folder(folder)
-    return TestClient(create_app(registry)), registry.default.id
+    # Every write says who is making it; the default client codes as one coder.
+    coder = registry.coders.create("Test Coder", "TC")
+    return TestClient(create_app(registry), headers={"X-Coder": coder["id"]}), registry.default.id
+
+
+def as_coder(api, name, initials):
+    """A second client on the same app, logged in as another coder."""
+    coder = api.post("/api/coders", json={"name": name, "initials": initials}).json()["coder"]
+    return TestClient(api.app, headers={"X-Coder": coder["id"]}), coder
 
 
 def test_discovery_prefers_video_over_audio(folder):
@@ -31,7 +60,7 @@ def test_discovery_prefers_video_over_audio(folder):
 
     assert recording.media_path(0).name == "meeting.mp4"
     assert recording.media_kind == "video"
-    assert recording.store.path.name == "session.highlights.json"
+    assert recording.store.list() == []
 
 
 def test_audio_only_folder(tmp_path):
@@ -86,6 +115,8 @@ def test_invalid_regex_is_a_400(client):
 def test_highlight_crud_round_trip(client, folder):
     api, rec_id = client
     base = f"/api/recordings/{rec_id}/highlights"
+    coder_id = api.headers["X-Coder"]
+    ui = api.post("/api/library/text-codebook", json={"name": "ui"}).json()["code"]
 
     created = api.post(
         base,
@@ -96,22 +127,23 @@ def test_highlight_crud_round_trip(client, folder):
             "end_cue_id": "c2",
             "end_char_offset": 24,
             "color": "teal",
-            "tags": ["ui"],
+            "codes": [ui["id"]],
         },
     )
     assert created.status_code == 201
     highlight = created.json()["highlight"]
     assert highlight["color"] == "teal"
+    assert highlight["codes"] == [ui["id"]]
+    assert highlight["coder"] == coder_id
 
     patched = api.patch(f"{base}/{highlight['id']}", json={"note": "worth quoting"})
     assert patched.json()["highlight"]["note"] == "worth quoting"
 
-    # One quotes file for the whole session folder.
-    assert (folder / "session.highlights.json").exists()
+    # One quotes file per coder, inside the recording folder.
+    assert (folder / "coders" / coder_id / "quotes.json").exists()
 
     listing = api.get(base).json()
     assert len(listing["highlights"]) == 1
-    assert listing["known_tags"] == ["ui"]
 
     assert api.delete(f"{base}/{highlight['id']}").status_code == 200
     assert api.get(base).json()["highlights"] == []
@@ -374,6 +406,8 @@ def test_a_reload_picks_up_quotes_written_since(folder, monkeypatch):
     """Each reload re-reads the folder, so work done elsewhere is not lost."""
     monkeypatch.setenv(FOLDER_ENV, str(folder))
     first = TestClient(from_environment())
+    coder = first.post("/api/coders", json={"name": "Ann", "initials": "A"}).json()["coder"]
+    first.headers["X-Coder"] = coder["id"]
     rec_id = first.get("/api/config").json()["default_recording_id"]
     first.post(
         f"/api/recordings/{rec_id}/highlights",
@@ -464,3 +498,623 @@ def test_selection_speaker_route_recredits_the_quotes_inside_it(client):
     moved = api.get(f"/api/recordings/{rec_id}/highlights").json()["highlights"][0]
     assert moved["text"] == "share my screen"
     assert moved["speaker"] == "Jordan Reyes"
+
+
+# -- video codes ---------------------------------------------------------------
+
+
+def test_video_code_round_trip(client):
+    http, rid = client
+    code = http.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
+
+    created = http.post(
+        f"/api/recordings/{rid}/video-codes",
+        json={"code_id": code["id"], "start": 1, "end": 3},
+    )
+    assert created.status_code == 201
+    span = created.json()["span"]
+
+    patched = http.patch(f"/api/recordings/{rid}/video-codes/{span['id']}", json={"end": 4})
+    assert patched.json()["span"]["end"] == 4
+
+    book = http.get("/api/library/video-codebook").json()
+    assert book["codes"][0]["span_count"] == 1
+    assert http.get(f"/api/recordings/{rid}").json()["video_codes"][0]["id"] == span["id"]
+
+    assert http.delete(f"/api/recordings/{rid}/video-codes/{span['id']}").status_code == 200
+    assert http.get(f"/api/recordings/{rid}/video-codes").json()["spans"] == []
+
+
+def test_video_code_bad_requests(client):
+    http, rid = client
+    code = http.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
+
+    backwards = {"code_id": code["id"], "start": 3, "end": 1}
+    assert http.post(f"/api/recordings/{rid}/video-codes", json=backwards).status_code == 400
+    unknown = {"code_id": "nope", "start": 1, "end": 2}
+    assert http.post(f"/api/recordings/{rid}/video-codes", json=unknown).status_code == 400
+    assert http.post("/api/library/video-codebook", json={"name": "Scroll"}).status_code == 400
+
+
+def test_video_code_in_use_must_be_merged(client):
+    http, rid = client
+    a = http.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
+    b = http.post("/api/library/video-codebook", json={"name": "swipe"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/video-codes", json={"code_id": a["id"], "start": 1, "end": 2})
+
+    assert http.delete(f"/api/library/video-codebook/{a['id']}").status_code == 400
+
+    merged = http.post(f"/api/library/video-codebook/{a['id']}/merge", json={"into": b["id"]})
+    assert merged.json()["moved"] == 1
+    assert [c["name"] for c in merged.json()["codes"]] == ["swipe"]
+    assert http.get(f"/api/recordings/{rid}/video-codes").json()["spans"][0]["code_id"] == b["id"]
+
+
+def test_video_codes_leave_text_codes_alone(client):
+    http, rid = client
+    http.post("/api/library/video-codebook", json={"name": "scroll"})
+
+    assert http.get("/api/library/text-codebook").json()["codes"] == []
+    assert all(t["tag"] != "scroll" for t in http.get("/api/library/vocabulary").json()["tags"])
+
+
+def test_there_is_no_separate_coding_view(client):
+    http, _ = client
+    assert http.get("/code").status_code == 404
+    assert http.get("/static/coding.js").status_code == 404
+    assert 'href="/code"' not in http.get("/reader").text
+
+
+# -- coders ----------------------------------------------------------------------
+
+
+QUOTE = {"text": "Cool.", "start_cue_id": "c0", "start_char_offset": 0, "end_cue_id": "c0", "end_char_offset": 5}
+
+
+def test_coders_can_be_listed_created_and_suggested(client):
+    http, _ = client
+    assert [c["initials"] for c in http.get("/api/coders").json()["coders"]] == ["TC"]
+    assert http.get("/api/coders/suggest", params={"name": "Tessa Collins"}).json()["initials"] == "TCo"
+
+    made = http.post("/api/coders", json={"name": "Rachel K.", "initials": "RK"})
+    assert made.status_code == 201
+    assert http.post("/api/coders", json={"name": "Rob King", "initials": "rk"}).status_code == 400
+
+
+def test_a_coder_can_rename_only_themselves(client):
+    http, _ = client
+    other, rachel = as_coder(http, "Rachel K.", "RK")
+    me = http.headers["X-Coder"]
+
+    assert http.patch(f"/api/coders/{me}", json={"initials": "TCx"}).json()["coder"]["initials"] == "TCx"
+    assert http.patch(f"/api/coders/{rachel['id']}", json={"initials": "ZZ"}).status_code == 403
+
+
+def test_writes_need_a_known_coder(client):
+    http, rid = client
+    anonymous = TestClient(http.app)
+    assert anonymous.post(f"/api/recordings/{rid}/highlights", json=QUOTE).status_code == 401
+    stranger = TestClient(http.app, headers={"X-Coder": "nobody"})
+    assert stranger.post(f"/api/recordings/{rid}/highlights", json=QUOTE).status_code == 401
+    # Reading needs nobody.
+    assert anonymous.get(f"/api/recordings/{rid}").status_code == 200
+
+
+def test_another_coders_quote_is_read_only(client):
+    http, rid = client
+    other, _ = as_coder(http, "Rachel K.", "RK")
+    mine = http.post(f"/api/recordings/{rid}/highlights", json=QUOTE).json()["highlight"]
+
+    assert other.patch(f"/api/recordings/{rid}/highlights/{mine['id']}", json={"note": "x"}).status_code == 403
+    assert other.delete(f"/api/recordings/{rid}/highlights/{mine['id']}").status_code == 403
+
+
+def test_everyone_sees_every_coders_quotes_labelled(client):
+    http, rid = client
+    other, rachel = as_coder(http, "Rachel K.", "RK")
+    http.post(f"/api/recordings/{rid}/highlights", json=QUOTE)
+    other.post(f"/api/recordings/{rid}/highlights", json=QUOTE)
+
+    coders = sorted(q["coder"] for q in http.get(f"/api/recordings/{rid}").json()["highlights"])
+    assert coders == sorted([http.headers["X-Coder"], rachel["id"]])
+
+
+def test_another_coders_span_is_read_only(client):
+    http, rid = client
+    other, _ = as_coder(http, "Rachel K.", "RK")
+    code = http.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
+    span = http.post(f"/api/recordings/{rid}/video-codes", json={"code_id": code["id"], "start": 1, "end": 2}).json()["span"]
+
+    assert other.patch(f"/api/recordings/{rid}/video-codes/{span['id']}", json={"end": 3}).status_code == 403
+    assert other.delete(f"/api/recordings/{rid}/video-codes/{span['id']}").status_code == 403
+    # Nor can Rachel code with Test Coder's codes.
+    assert other.post(f"/api/recordings/{rid}/video-codes", json={"code_id": code["id"], "start": 1, "end": 2}).status_code == 400
+
+
+# -- the text codebook -------------------------------------------------------------
+
+
+def test_text_codebook_round_trip(client):
+    http, rid = client
+    trust = http.post("/api/library/text-codebook", json={"name": "trust"})
+    assert trust.status_code == 201
+    code = trust.json()["code"]
+    http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [code["id"]]})
+
+    listed = http.get("/api/library/text-codebook").json()["codes"]
+    assert [(c["name"], c["coder"], c["quote_count"]) for c in listed] == [("trust", http.headers["X-Coder"], 1)]
+
+    renamed = http.patch(f"/api/library/text-codebook/{code['id']}", json={"name": "reliance", "description": "x"})
+    assert renamed.json()["code"]["name"] == "reliance"
+    assert http.post("/api/library/text-codebook", json={"name": "Reliance"}).status_code == 400
+
+
+def test_a_text_code_in_use_cannot_be_deleted_until_merged(client):
+    http, rid = client
+    a = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    b = http.post("/api/library/text-codebook", json={"name": "reliance"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [a["id"], b["id"]]})
+
+    assert http.delete(f"/api/library/text-codebook/{a['id']}").status_code == 400
+    merged = http.post(f"/api/library/text-codebook/{a['id']}/merge", json={"into": b["id"]}).json()
+    assert merged["moved"] == 1
+    assert http.get(f"/api/recordings/{rid}").json()["highlights"][0]["codes"] == [b["id"]]
+    assert [c["name"] for c in merged["codes"]] == ["reliance"]
+
+
+def test_another_coders_text_code_is_read_only(client):
+    http, _ = client
+    other, _ = as_coder(http, "Rachel K.", "RK")
+    code = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+
+    assert other.patch(f"/api/library/text-codebook/{code['id']}", json={"name": "mine"}).status_code == 403
+    assert other.delete(f"/api/library/text-codebook/{code['id']}").status_code == 403
+    # The same name is fine in Rachel's own codebook.
+    assert other.post("/api/library/text-codebook", json={"name": "trust"}).status_code == 201
+
+
+def test_library_pages_see_codes_by_name(client):
+    http, rid = client
+    code = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [code["id"]]})
+
+    library = http.get("/api/library").json()
+    assert [t["tag"] for t in library["tags"]] == ["trust"]
+    assert http.get("/api/library/quotes").json()["quotes"][0]["tags"] == ["trust"]
+
+
+# -- refresh and old files ---------------------------------------------------------
+
+
+def test_refresh_shows_work_a_collaborator_synced_in(client, folder):
+    http, rid = client
+    elsewhere = open_recording(folder)  # the collaborator's tool, writing the same folder
+    elsewhere.store.create("rk-coder", QUOTE)
+    (folder / "coders" / "rk-coder" / "coder.json").write_text(
+        '{"id": "rk-coder", "name": "Rachel K.", "initials": "RK"}'
+    )
+
+    assert http.get(f"/api/recordings/{rid}").json()["highlights"] == []
+    assert http.post("/api/sync").status_code == 200
+    assert [q["coder"] for q in http.get(f"/api/recordings/{rid}").json()["highlights"]] == ["rk-coder"]
+    assert "RK" in [c["initials"] for c in http.get("/api/coders").json()["coders"]]
+
+
+def test_old_shared_files_are_reported(folder):
+    (folder / "session.highlights.json").write_text("{}")
+    (folder / "library.video_codebook.json").write_text("{}")
+    registry = RecordingRegistry()
+    registry.add_folder(folder)
+
+    config = TestClient(create_app(registry)).get("/api/config").json()
+
+    assert sorted(config["legacy_files"]) == ["library.video_codebook.json", "session.highlights.json"]
+
+
+# -- part 1b: applications of a code, and pages that follow the mode -------------
+
+
+def test_a_text_codes_applications_span_every_recording_and_can_be_taken_off(client):
+    http, rid = client
+    code = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    other = http.post("/api/library/text-codebook", json={"name": "tone"}).json()["code"]
+    quote = http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [code["id"], other["id"]]}).json()["highlight"]
+
+    listed = http.get(f"/api/library/text-codebook/{code['id']}/applications").json()["applications"]
+    assert [(a["ref"], a["recording_id"], a["coder"]) for a in listed] == [(f"{rid}:{quote['id']}", rid, http.headers["X-Coder"])]
+
+    removed = http.post(f"/api/library/text-codebook/{code['id']}/applications/remove", json={"refs": [listed[0]["ref"]]})
+    assert removed.json()["removed"] == 1
+    kept = http.get(f"/api/recordings/{rid}").json()["highlights"]
+    assert [q["codes"] for q in kept] == [[other["id"]]]  # the quote stays, without the code
+    assert http.delete(f"/api/library/text-codebook/{code['id']}").status_code == 200
+
+
+def test_uncoded_quotes_list_every_quote_without_a_code(client):
+    http, rid = client
+    code = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [code["id"]]})
+    bare = http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "note": "come back to this"}).json()["highlight"]
+
+    listed = http.get("/api/library/text-codebook/uncoded").json()["quotes"]
+    assert [(q["ref"], q["note"], q["coder"]) for q in listed] == [(f"{rid}:{bare['id']}", "come back to this", http.headers["X-Coder"])]
+    assert all("start_time" in q for q in listed)
+
+    http.patch(f"/api/recordings/{rid}/highlights/{bare['id']}", json={"codes": [code["id"]]})
+    assert http.get("/api/library/text-codebook/uncoded").json()["quotes"] == []
+
+
+def test_a_video_codes_applications_can_be_removed(client):
+    http, rid = client
+    code = http.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
+    span = http.post(f"/api/recordings/{rid}/video-codes", json={"code_id": code["id"], "start": 1, "end": 2}).json()["span"]
+
+    listed = http.get(f"/api/library/video-codebook/{code['id']}/applications").json()["applications"]
+    assert [a["ref"] for a in listed] == [f"{rid}:{span['id']}"]
+    http.post(f"/api/library/video-codebook/{code['id']}/applications/remove", json={"refs": [listed[0]["ref"]]})
+    assert http.get(f"/api/recordings/{rid}/video-codes").json()["spans"] == []
+
+
+def test_another_coders_applications_cannot_be_removed(client):
+    http, rid = client
+    other, _ = as_coder(http, "Rachel K.", "RK")
+    code = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [code["id"]]})
+    ref = http.get(f"/api/library/text-codebook/{code['id']}/applications").json()["applications"][0]["ref"]
+
+    response = other.post(f"/api/library/text-codebook/{code['id']}/applications/remove", json={"refs": [ref]})
+    assert response.status_code == 403
+
+
+def test_library_follows_the_mode(client):
+    http, rid = client
+    other, _ = as_coder(http, "Rachel K.", "RK")
+    mine = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    theirs = other.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [mine["id"]]})
+    other.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [theirs["id"]]})
+
+    alone = http.get("/api/library", params={"mode": "independent"}).json()
+    assert [t["tag"] for t in alone["tags"]] == ["trust"]
+    assert alone["quote_count"] == 1
+    assert len(http.get("/api/library/quotes", params={"mode": "independent"}).json()["quotes"]) == 1
+
+    together = http.get("/api/library", params={"mode": "collaborative"}).json()
+    assert sorted(t["tag"] for t in together["tags"]) == ["trust · RK", "trust · TC"]
+    assert together["quote_count"] == 2
+
+
+def test_the_library_lists_video_codes_per_recording(client):
+    http, rid = client
+    code = http.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/video-codes", json={"code_id": code["id"], "start": 1, "end": 2})
+
+    video = http.get("/api/library", params={"mode": "independent"}).json()["video"]
+    assert [(v["name"], v["span_count"], v["recordings"]) for v in video] == [("scroll", 1, {rid: 1})]
+
+
+def test_the_codebook_page_is_served(client):
+    http, _ = client
+    page = http.get("/codebook")
+    assert page.status_code == 200
+    assert "codebook.js" in page.text
+    assert page.headers["cache-control"] == "no-cache"
+
+
+# -- part 2: common codes -----------------------------------------------------------
+
+
+def test_moving_a_code_to_common_over_the_api(client):
+    http, rid = client
+    code = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [code["id"]], "note": "n"})
+    base = f"/api/library/text-codebook/{code['id']}/move"
+
+    assert http.post(base, json={"final": False}).status_code == 400
+    preview = http.post(base, params={"dry_run": 1}, json={"final": True}).json()
+    assert (preview["moved"], preview["quotes_deleted"]) == (1, 1)
+
+    moved = http.post(base, json={"final": True, "description": "agreed"})
+    assert moved.status_code == 200
+    codes = http.get("/api/library/text-codebook").json()["codes"]
+    assert [(c["name"], c["coder"], c["quote_count"]) for c in codes] == [("trust", "common", 1)]
+    [quote] = http.get(f"/api/recordings/{rid}").json()["highlights"]
+    assert quote["coder"] == "common"
+
+
+def test_a_clash_is_a_409_naming_the_common_code(client):
+    http, rid = client
+    other, _ = as_coder(http, "Rachel K.", "RK")
+    theirs = other.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    other.post(f"/api/library/text-codebook/{theirs['id']}/move", json={"final": True})
+    mine = http.post("/api/library/text-codebook", json={"name": "Trust"}).json()["code"]
+
+    clash = http.post(f"/api/library/text-codebook/{mine['id']}/move", json={"final": True})
+    assert clash.status_code == 409
+    common_id = clash.json()["code"]["id"]
+    merged = http.post(f"/api/library/text-codebook/{mine['id']}/move", json={"final": True, "into": common_id})
+    assert merged.status_code == 200
+
+
+def test_anyone_may_edit_return_and_read_the_history_of_a_common_code(client):
+    http, rid = client
+    other, _ = as_coder(http, "Rachel K.", "RK")
+    code = http.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/video-codes", json={"code_id": code["id"], "start": 1, "end": 2})
+    http.post(f"/api/library/video-codebook/{code['id']}/move", json={"final": True})
+    common_id = next(c["id"] for c in http.get("/api/library/video-codebook").json()["codes"] if c["coder"] == "common")
+
+    assert other.patch(f"/api/library/video-codebook/{common_id}", json={"description": "moving through results"}).status_code == 200
+    assert other.delete(f"/api/library/video-codebook/{common_id}").status_code == 400  # still has a span
+    assert other.post(f"/api/library/video-codebook/{common_id}/return").status_code == 200
+
+    history = http.get(f"/api/library/video-codebook/{common_id}/history").json()["entries"]
+    assert [e["action"] for e in history] == ["returned", "edited", "moved"]
+    # Test Coder's span waits for them; Sync claims it.
+    assert [s["coder"] for s in http.get(f"/api/recordings/{rid}/video-codes").json()["spans"]] == []
+    http.post("/api/sync")
+    assert [s["coder"] for s in http.get(f"/api/recordings/{rid}/video-codes").json()["spans"]] == [http.headers["X-Coder"]]
+
+
+def test_refresh_pushes_and_updates_the_last_synced_time(client, folder):
+    http, _ = client
+    code = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/library/text-codebook/{code['id']}/move", json={"final": True})
+
+    before = http.get("/api/common/status").json()
+    assert "pending" not in before
+    http.post("/api/sync")
+    after = http.get("/api/common/status").json()
+    assert after["synced_at"] > before["synced_at"]
+    assert (folder / "common" / "text_codebook.json").is_file()
+
+
+def test_removing_a_common_codes_quotes_from_the_code_page(client):
+    http, rid = client
+    code = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [code["id"]]})
+    http.post(f"/api/library/text-codebook/{code['id']}/move", json={"final": True})
+    common_id = http.get("/api/library/text-codebook").json()["codes"][0]["id"]
+    other, _ = as_coder(http, "Rachel K.", "RK")
+
+    ref = other.get(f"/api/library/text-codebook/{common_id}/applications").json()["applications"][0]["ref"]
+    assert other.post(f"/api/library/text-codebook/{common_id}/applications/remove", json={"refs": [ref]}).json()["removed"] == 1
+    assert http.get(f"/api/recordings/{rid}").json()["highlights"] == []
+    assert other.delete(f"/api/library/text-codebook/{common_id}").status_code == 200
+
+
+def test_a_common_codes_applications_say_which_coders_put_it_there(client):
+    http, rid = client
+    other, them = as_coder(http, "Rachel K.", "RK")
+    me = http.headers["X-Coder"]
+    shared = {**QUOTE}
+    mine_only = {"text": "Cool", "start_cue_id": "c0", "start_char_offset": 0, "end_cue_id": "c0", "end_char_offset": 4}
+    theirs_only = {"text": "And", "start_cue_id": "c0", "start_char_offset": 6, "end_cue_id": "c0", "end_char_offset": 9}
+
+    a = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    b = other.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    for quote in (shared, mine_only):
+        http.post(f"/api/recordings/{rid}/highlights", json={**quote, "codes": [a["id"]], "note": f"mine {quote['text']}"})
+    for quote in (shared, theirs_only):
+        other.post(f"/api/recordings/{rid}/highlights", json={**quote, "codes": [b["id"]], "note": f"theirs {quote['text']}"})
+    http.post(f"/api/library/text-codebook/{a['id']}/move", json={"final": True})
+    common_id = next(c["id"] for c in http.get("/api/library/text-codebook").json()["codes"] if c["coder"] == "common")
+    assert other.post(f"/api/library/text-codebook/{b['id']}/move", json={"final": True, "into": common_id}).status_code == 200
+
+    rows = {r["text"]: r for r in http.get(f"/api/library/text-codebook/{common_id}/applications").json()["applications"]}
+    assert rows["Cool"]["coders"] == [me]
+    assert rows["And"]["coders"] == [them["id"]]
+    assert rows["Cool."]["coders"] == sorted([me, them["id"]])
+    assert {n["note"] for n in rows["Cool."]["notes"]} == {"mine Cool.", "theirs Cool."}
+
+
+def test_a_common_video_codes_spans_say_which_coders_put_them_there(client):
+    http, rid = client
+    other, them = as_coder(http, "Rachel K.", "RK")
+    me = http.headers["X-Coder"]
+    a = http.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
+    b = other.post("/api/library/video-codebook", json={"name": "scroll"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/video-codes", json={"code_id": a["id"], "start": 1, "end": 2, "note": "mine"})
+    other.post(f"/api/recordings/{rid}/video-codes", json={"code_id": b["id"], "start": 1.2, "end": 2.1, "note": "theirs"})
+    http.post(f"/api/library/video-codebook/{a['id']}/move", json={"final": True})
+    common_id = next(c["id"] for c in http.get("/api/library/video-codebook").json()["codes"] if c["coder"] == "common")
+    other.post(f"/api/library/video-codebook/{b['id']}/move", json={"final": True, "into": common_id})
+
+    [row] = http.get(f"/api/library/video-codebook/{common_id}/applications").json()["applications"]
+    assert row["coders"] == sorted([me, them["id"]])
+    assert {(n["coder"], n["note"]) for n in row["notes"]} == {(me, "mine"), (them["id"], "theirs")}
+
+
+def test_transcript_corrections_need_a_known_coder(client):
+    http, rid = client
+    anonymous = TestClient(http.app)
+    assert anonymous.patch(f"/api/recordings/{rid}/cues/c0", json={"text": "Changed."}).status_code == 401
+    assert http.patch(f"/api/recordings/{rid}/cues/c0", json={"text": "Changed."}).status_code == 200
+
+
+def test_the_reader_is_three_panes_with_code_rows_and_a_mute_button(client):
+    http, _ = client
+    reader = http.get("/reader").text
+    for marker in ('id="panes"', 'data-pane="video"', 'data-pane="vcodes"', 'data-pane="transcript"',
+                   'data-pane="codes"', 'id="search-drop"', 'id="vc-tiers"', 'id="mute"'):
+        assert marker in reader
+    assert http.get("/static/layout.js").status_code == 200
+
+
+def test_similar_quotes_follow_the_mode(client):
+    http, rid = client
+    other, _ = as_coder(http, "Rachel K.", "RK")
+    mine = http.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    theirs = other.post("/api/library/text-codebook", json={"name": "trust"}).json()["code"]
+    quote = http.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [mine["id"]]}).json()["highlight"]
+    other.post(f"/api/recordings/{rid}/highlights", json={**QUOTE, "codes": [theirs["id"]]})
+
+    ref = f"{rid}:{quote['id']}"
+    alone = http.get("/api/library/similar", params={"ref": ref, "mode": "independent"}).json()["similar"]
+    together = http.get("/api/library/similar", params={"ref": ref, "mode": "collaborative"}).json()["similar"]
+
+    assert alone == []
+    assert len(together) == 1
+
+
+def test_conversation_highlight_crud(client):
+    api, rec_id = client
+    base = f"/api/recordings/{rec_id}/conversation-highlights"
+    assert api.get(base).json() == {"highlights": []}
+
+    created = api.post(base, json=conversation_payload(note="n"))
+    assert created.status_code == 201
+    highlight = created.json()["highlight"]
+    assert highlight["note"] == "n"
+    assert [h["id"] for h in api.get(base).json()["highlights"]] == [highlight["id"]]
+
+    patched = api.patch(f"{base}/{highlight['id']}", json={"note": "changed"})
+    assert patched.json()["highlight"]["note"] == "changed"
+    assert api.patch(f"{base}/nope", json={"note": "x"}).status_code == 404
+
+    assert api.delete(f"{base}/{highlight['id']}").json() == {"deleted": highlight["id"]}
+    assert api.delete(f"{base}/{highlight['id']}").status_code == 404
+    assert api.get(base).json() == {"highlights": []}
+
+
+def test_conversation_highlight_bad_message_400(client):
+    api, rec_id = client
+    bad = conversation_payload(start_message_id="c1:9:0:user")
+    response = api.post(f"/api/recordings/{rec_id}/conversation-highlights", json=bad)
+    assert response.status_code == 400
+
+
+def test_conversation_highlight_others_readonly(client):
+    api, rec_id = client
+    base = f"/api/recordings/{rec_id}/conversation-highlights"
+    hid = api.post(base, json=conversation_payload()).json()["highlight"]["id"]
+
+    other, _ = as_coder(api, "Other Coder", "OC")
+    assert other.patch(f"{base}/{hid}", json={"note": "x"}).status_code == 403
+    assert other.delete(f"{base}/{hid}").status_code == 403
+    assert len(other.get(base).json()["highlights"]) == 1
+
+
+def test_recording_payload_has_conversation(client):
+    api, rec_id = client
+    payload = api.get(f"/api/recordings/{rec_id}").json()
+    assert USER_MSG in payload["conversation"]["messages"]
+    assert payload["conversation_highlights"] == []
+
+
+# -- the conversation codebook ------------------------------------------------------
+
+
+def test_conversation_codebook_crud(client):
+    """Conversation codes are created, counted, renamed and listed with their highlights, as text codes are."""
+    http, rid = client
+    created = http.post("/api/library/conversation-codebook", json={"name": "trust"})
+    assert created.status_code == 201
+    code = created.json()["code"]
+    assert http.get("/api/library/text-codebook").json()["codes"] == []
+    highlight = http.post(f"/api/recordings/{rid}/conversation-highlights",
+                          json=conversation_payload(codes=[code["id"]], note="n")).json()["highlight"]
+
+    state = http.get("/api/library/conversation-codebook").json()
+    assert [(c["name"], c["coder"], c["highlight_count"]) for c in state["codes"]] == [("trust", http.headers["X-Coder"], 1)]
+    assert state["colors"]
+
+    renamed = http.patch(f"/api/library/conversation-codebook/{code['id']}", json={"name": "reliance", "description": "x"})
+    assert renamed.json()["code"]["name"] == "reliance"
+    assert http.post("/api/library/conversation-codebook", json={"name": "Reliance"}).status_code == 400
+
+    [row] = http.get(f"/api/library/conversation-codebook/{code['id']}/applications").json()["applications"]
+    assert {k: row[k] for k in ("ref", "recording_id", "highlight_id", "text", "note", "coder", "start_message_id",
+                                "start_turn", "end_turn", "speaker")} == {
+        "ref": f"{rid}:{highlight['id']}", "recording_id": rid, "highlight_id": highlight["id"], "text": "hello", "note": "n",
+        "coder": http.headers["X-Coder"], "start_message_id": USER_MSG, "start_turn": 0, "end_turn": 0, "speaker": "User"}
+    assert row["recording_title"]
+    assert "start_time" not in row
+
+    bare = http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(note="later")).json()["highlight"]
+    [uncoded] = http.get("/api/library/conversation-codebook/uncoded").json()["highlights"]
+    assert (uncoded["ref"], uncoded["highlight_id"], uncoded["speaker"], uncoded["start_turn"]) == (f"{rid}:{bare['id']}", bare["id"], "User", 0)
+
+
+def test_conversation_applications_tolerate_a_malformed_message_id(client, folder):
+    """A stored highlight whose message id cannot be parsed is listed with no turn or speaker."""
+    http, rid = client
+    code = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(codes=[code["id"]]))
+    path = folder / "coders" / http.headers["X-Coder"] / "conversation_highlights.json"
+    data = json.loads(path.read_text())
+    data["highlights"][0]["start_message_id"] = "broken"
+    path.write_text(json.dumps(data))
+    http.post("/api/sync")
+
+    response = http.get(f"/api/library/conversation-codebook/{code['id']}/applications")
+    assert response.status_code == 200
+    [row] = response.json()["applications"]
+    assert (row["start_turn"], row["end_turn"], row["speaker"]) == (None, None, None)
+    # A message not in the chat sorts after every message that is (the chat has two).
+    assert row["position"] == [2, 0]
+
+
+def test_conversation_application_rows_carry_display_position(client):
+    """Each Codebook row carries its place in the chat, so the page lists a recording's highlights top to bottom."""
+    http, rid = client
+    code = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights",
+              json=conversation_payload(text="hi", start_message_id=AI_MSG, end_message_id=AI_MSG,
+                                        end_char_offset=2, codes=[code["id"]]))
+    http.post(f"/api/recordings/{rid}/conversation-highlights",
+              json=conversation_payload(text="there", start_char_offset=6, end_char_offset=11, codes=[code["id"]]))
+    rows = http.get(f"/api/library/conversation-codebook/{code['id']}/applications").json()["applications"]
+    assert sorted(row["position"] for row in rows) == [[0, 6], [1, 0]]
+
+
+def test_conversation_code_delete_in_use_refused(client):
+    """A conversation code on a highlight cannot be deleted until it is taken off; the highlight stays."""
+    http, rid = client
+    code = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(codes=[code["id"]]))
+
+    refused = http.delete(f"/api/library/conversation-codebook/{code['id']}")
+    assert refused.status_code == 400
+    assert refused.json()["detail"].startswith("1 highlight still use")
+
+    [row] = http.get(f"/api/library/conversation-codebook/{code['id']}/applications").json()["applications"]
+    removed = http.post(f"/api/library/conversation-codebook/{code['id']}/applications/remove", json={"refs": [row["ref"]]})
+    assert removed.json()["removed"] == 1
+    assert [h["codes"] for h in http.get(f"/api/recordings/{rid}/conversation-highlights").json()["highlights"]] == [[]]
+    deleted = http.delete(f"/api/library/conversation-codebook/{code['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json()["codes"] == []
+
+
+def test_conversation_code_merge(client):
+    """Merging one conversation code into another moves its highlights and removes it."""
+    http, rid = client
+    a = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    b = http.post("/api/library/conversation-codebook", json={"name": "reliance"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(codes=[a["id"], b["id"]]))
+
+    assert http.post(f"/api/library/conversation-codebook/{a['id']}/merge", json={"into": a["id"]}).status_code == 400
+    merged = http.post(f"/api/library/conversation-codebook/{a['id']}/merge", json={"into": b["id"]}).json()
+    assert merged["moved"] == 1
+    assert [h["codes"] for h in http.get(f"/api/recordings/{rid}/conversation-highlights").json()["highlights"]] == [[b["id"]]]
+    assert [c["name"] for c in merged["codes"]] == ["reliance"]
+
+
+def test_conversation_code_move_return_and_history(client):
+    """The move, return and history routes work for conversation codes."""
+    http, rid = client
+    code = http.post("/api/library/conversation-codebook", json={"name": "trust"}).json()["code"]
+    http.post(f"/api/recordings/{rid}/conversation-highlights", json=conversation_payload(codes=[code["id"]]))
+    base = "/api/library/conversation-codebook"
+
+    assert http.post(f"{base}/{code['id']}/move?dry_run=true", json={"final": True}).json()["moved"] == 1
+    moved = http.post(f"{base}/{code['id']}/move", json={"final": True}).json()
+    [common] = [c for c in moved["codes"] if c["coder"] == "common"]
+    assert common["highlight_count"] == 1
+
+    returned = http.post(f"{base}/{common['id']}/return").json()
+    assert returned["returned"] == 1
+    assert [c["coder"] for c in returned["codes"]] == [http.headers["X-Coder"]]
+    entries = http.get(f"{base}/{common['id']}/history").json()["entries"]
+    assert [(e["action"], e["kind"]) for e in entries] == [("returned", "conversation"), ("moved", "conversation")]

@@ -7,6 +7,7 @@ from subtitle_search.editing import (
     apply_cue_edit,
     apply_cue_merge,
     apply_cue_split,
+    apply_roster_edit,
     apply_selection_speaker,
     apply_speaker_edit,
     backup_path,
@@ -201,6 +202,7 @@ def test_unchanged_text_is_a_no_op(recording):
 def _quote(recording, cue_id, start, end):
     cue = recording.transcript.cue(cue_id)
     return recording.store.create(
+        "tester",
         {
             "text": cue.text[start:end],
             "start_cue_id": cue_id,
@@ -404,6 +406,7 @@ def test_reassigning_leaves_the_words_alone(one_voice):
 
 def test_quotes_stay_anchored_across_a_reassignment(one_voice):
     quote = one_voice.store.create(
+        "tester",
         {
             "text": "read the whole thing",
             "start_cue_id": "c1",
@@ -792,6 +795,7 @@ def test_a_quote_inside_an_absorbed_caption_follows_its_words(chopped):
 
 def test_a_quote_spanning_the_run_still_covers_the_same_words(chopped):
     quote = chopped.store.create(
+        "tester",
         {
             "text": "sentence chopped across three",
             "start_cue_id": "c0",
@@ -945,3 +949,18 @@ def test_quotes_in_other_captions_keep_their_speaker(one_voice):
     elsewhere = _quote(one_voice, "c3", 0, 7)
     apply_speaker_edit(one_voice, "c1", "Rafael Ortiz")
     assert elsewhere["speaker"] == "Dana Whitfield"
+
+
+def test_assigning_a_name_in_another_case_does_not_add_a_second_speaker(one_voice):
+    apply_speaker_edit(one_voice, "c1", "Rafael Ortiz")
+    apply_speaker_edit(one_voice, "c3", "rafael ortiz")
+
+    transcript = one_voice.transcript
+    assert [e["name"] for e in transcript.roster] == ["Rafael Ortiz"]
+    assert transcript.cue("c3").speaker == "Rafael Ortiz"
+
+
+@pytest.mark.parametrize("key", ["i", "o", "x", "m"])
+def test_video_code_and_mute_keys_cannot_be_speaker_keys(one_voice, key):
+    with pytest.raises(EditError):
+        apply_roster_edit(one_voice, [{"name": "Rafael Ortiz", "key": key}])

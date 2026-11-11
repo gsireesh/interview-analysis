@@ -1673,6 +1673,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "markdown-it-py" },
     { name = "rapidfuzz" },
     { name = "uvicorn" },
 ]
@@ -1705,6 +1706,7 @@ neural = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.110,<1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27,<1" },
+    { name = "markdown-it-py", specifier = ">=3,<5" },
     { name = "numpy", marker = "extra == 'align'", specifier = ">=1.24,<3" },
     { name = "numpy", marker = "extra == 'analysis'", specifier = ">=1.24,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0,<10" },

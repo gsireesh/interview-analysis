@@ -7,7 +7,7 @@ const ORDER = ["auto", "light", "dark"];
 
 //: How long a message stays. A warning outlives a confirmation, because one is
 //: something to act on and the other is something to notice.
-const LINGER = { info: 5000, warn: 11000, action: 15000 };
+const LINGER = { info: 3000, warn: 5000, action: 15000 };
 
 export function applyStoredTheme() {
   document.documentElement.dataset.theme = recall(THEME_KEY, "auto");
